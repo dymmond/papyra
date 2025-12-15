@@ -8,6 +8,7 @@ import anyio.abc
 
 from ._envelope import STOP, ActorTerminated, DeadLetter, Envelope, Reply
 from .actor import Actor
+from .address import ActorAddress
 from .context import ActorContext
 from .exceptions import ActorStopped
 from .mailbox import Mailbox
@@ -39,6 +40,7 @@ class _ActorRuntime:
     actor: Actor
     mailbox: Mailbox
     policy: SupervisionPolicy
+    address: ActorAddress
 
     parent: Optional["_ActorRuntime"] = None
     children: list["_ActorRuntime"] = field(default_factory=list)
@@ -75,7 +77,14 @@ class DeadLetterMailbox:
 class ActorSystem:
     """Root runtime container for actors."""
 
-    def __init__(self, *, on_dead_letter: Callable[[DeadLetter], None] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        system_id: str = "local",
+        on_dead_letter: Callable[[DeadLetter], None] | None = None,
+    ) -> None:
+        self.system_id = system_id
+
         self._tg: anyio.abc.TaskGroup | None = None
         self._closed = False
 
@@ -100,22 +109,17 @@ class ActorSystem:
         policy: Optional[SupervisionPolicy] = None,
         parent: Optional[Any] = None,
     ) -> "ActorRef":
-        """
-        Spawn a new actor and return an ActorRef.
-        """
-        from .ref import ActorRef  # local import to avoid cycles
+        from .ref import ActorRef
 
         if self._closed or self._tg is None:
-            raise ActorStopped("ActorSystem is not running. Did you call await system.start()?")
+            raise ActorStopped("ActorSystem is not running.")
 
-        # Normalize into a zero-arg factory
-        if isinstance(actor_factory, type):
-            factory: ActorFactory = actor_factory
-        else:
-            factory = actor_factory
+        factory: ActorFactory = actor_factory if callable(actor_factory) else actor_factory
 
         rid = self._next_id
         self._next_id += 1
+
+        address = ActorAddress(system=self.system_id, actor_id=rid)
 
         mailbox = Mailbox(capacity=mailbox_capacity)
         actor = factory()
@@ -127,6 +131,7 @@ class ActorSystem:
             mailbox=mailbox,
             policy=policy or SupervisionPolicy(strategy=Strategy.STOP),
             parent=self._resolve_parent_runtime(parent),
+            address=address,
         )
 
         if rt.parent is not None:
@@ -140,11 +145,40 @@ class ActorSystem:
             _mailbox_put=rt.mailbox.put,
             _is_alive=lambda: (not self._closed) and rt.alive and (not rt.stopping),
             _dead_letter=self.dead_letters.push,
+            _address=address,
         )
 
         self._inject_context(rt, self_ref=ref)
         self._tg.start_soon(self._run_actor, rt)
         return ref
+
+    def ref_for(self, address: ActorAddress | str) -> "ActorRef":
+        """
+        Resolve an ActorRef from an ActorAddress.
+
+        Phase 11:
+        - Local-only resolution
+        - Transport boundary defined
+        """
+        from .ref import ActorRef
+
+        if isinstance(address, str):
+            address = ActorAddress.parse(address)
+
+        if address.system != self.system_id:
+            raise ActorStopped("Remote actor systems are not supported yet.")
+
+        rt = self._by_id.get(address.actor_id)
+        if rt is None:
+            raise ActorStopped("Actor does not exist.")
+
+        return ActorRef(
+            _rid=rt.rid,
+            _mailbox_put=rt.mailbox.put,
+            _is_alive=lambda: (not self._closed) and rt.alive and (not rt.stopping),
+            _dead_letter=self.dead_letters.push,
+            _address=rt.address,
+        )
 
     async def stop(self, ref: Any) -> None:
         """
