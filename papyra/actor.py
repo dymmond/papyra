@@ -65,8 +65,7 @@ class Actor:
         """
         if self._context is None:
             raise RuntimeError(
-                "ActorContext is not available yet. "
-                "Access `self.context` from on_start/receive/on_stop."
+                "ActorContext is not available yet. " "Access `self.context` from on_start/receive/on_stop."
             )
         return self._context
 

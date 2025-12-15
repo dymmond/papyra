@@ -80,11 +80,13 @@ class _ActorRuntime:
     address: ActorAddress
 
     parent: _ActorRuntime | None = None
+    name: str | None = None
     children: list[_ActorRuntime] = field(default_factory=list)
     watchers: set[int] = field(default_factory=set)
 
     alive: bool = True
     stopping: bool = False
+    restarting: bool = False
     restart_timestamps: list[float] = field(default_factory=list)
 
 
@@ -190,6 +192,7 @@ class ActorSystem:
         self._actors: list[_ActorRuntime] = []
         self._by_id: dict[int, _ActorRuntime] = {}
         self._next_id: int = 1
+        self._registry: dict[str, ActorAddress] = {}
         self.dead_letters = DeadLetterMailbox(on_dead_letter=on_dead_letter)
 
     async def start(self) -> None:
@@ -218,6 +221,7 @@ class ActorSystem:
         mailbox_capacity: int | None = 1024,
         policy: SupervisionPolicy | None = None,
         parent: Any | None = None,
+        name: str | None = None,
     ) -> "ActorRef":
         """
         Spawn a new actor within the system.
@@ -238,6 +242,8 @@ class ActorSystem:
         parent : Any | None, optional
             The `ActorRef` of the parent actor. If provided, the new actor is registered
             as a child of the parent. Defaults to None.
+        name : str, optional
+            The name of this actor. Defaults to None.
 
         Returns
         -------
@@ -253,6 +259,9 @@ class ActorSystem:
 
         if self._closed or self._tg is None:
             raise ActorStopped("ActorSystem is not running.")
+
+        if name is not None and name in self._registry:
+            raise ValueError(f"Actor name '{name}' already exists.")
 
         if isinstance(actor_factory, type):
             factory: ActorFactory = actor_factory
@@ -275,6 +284,7 @@ class ActorSystem:
             policy=policy or SupervisionPolicy(strategy=Strategy.STOP),
             parent=self._resolve_parent_runtime(parent),
             address=address,
+            name=name,
         )
 
         if rt.parent is not None:
@@ -282,6 +292,9 @@ class ActorSystem:
 
         self._actors.append(rt)
         self._by_id[rid] = rt
+
+        if name is not None:
+            self._registry[name] = address
 
         ref = ActorRef(
             _rid=rid,
@@ -339,6 +352,50 @@ class ActorSystem:
             _is_alive=lambda: (not self._closed) and rt.alive and (not rt.stopping),
             _dead_letter=self.dead_letters.push,
             _address=address,
+        )
+
+    def ref_for_name(self, name: str) -> "ActorRef":
+        """
+        Retrieve an `ActorRef` for a specific actor using its registered symbolic name.
+
+        This mechanism allows for location-independent lookups, where other actors can retrieve
+        a reference knowing only the stable name, rather than the specific runtime ID or address.
+        It resolves the name to an `ActorAddress` via the internal registry and then converts that
+        address into a usable reference.
+
+        Parameters
+        ----------
+        name : str
+            The unique human-readable name assigned to the actor.
+
+        Returns
+        -------
+        ActorRef
+            A valid reference to the actor associated with the given name.
+
+        Raises
+        ------
+        ActorStopped
+            If the name is not found in the registry, implying the actor does not exist or has
+            not been registered.
+        """
+        # Attempt to retrieve the address associated with the name from the registry.
+        from .ref import ActorRef
+
+        address = self._registry.get(name)
+        if address is None:
+            raise ActorStopped(f"Actor with name '{name}' does not exist.")
+
+        rt = self._by_id.get(address.actor_id)
+        if rt is None:
+            raise ActorStopped(f"Actor with name '{name}' does not exist.")
+
+        return ActorRef(
+            _rid=rt.rid,
+            _mailbox_put=rt.mailbox.put,
+            _is_alive=lambda: (not self._closed) and rt.alive and (not rt.stopping),
+            _dead_letter=self.dead_letters.push,
+            _address=rt.address,
         )
 
     async def stop(self, ref: Any) -> None:
@@ -534,8 +591,12 @@ class ActorSystem:
                     break
 
         finally:
-            # Mark actor as dead first
+            # Mark actor as dead for this run-loop
             rt.alive = False
+
+            # Remove name only on permanent stop (not restart)
+            if rt.name is not None and rt.stopping and not rt.restarting:
+                self._registry.pop(rt.name, None)
 
             # Create inert ref for termination notification
             self_ref = ActorRef(
@@ -720,11 +781,16 @@ class ActorSystem:
         rt : _ActorRuntime
             The runtime to restart.
         """
+        from .ref import ActorRef
+
+        rt.restarting = True
+
         can_restart = await self._check_restart_limits(rt)
         if not can_restart:
             rt.alive = False
             rt.stopping = True
             await rt.mailbox.aclose()
+            rt.restarting = False
             return
 
         await self._safe_on_stop(rt)
@@ -732,8 +798,8 @@ class ActorSystem:
 
         rt.actor = rt.actor_factory()
         rt.stopping = False
-
-        from .ref import ActorRef
+        if rt.name is not None:
+            self._registry[rt.name] = rt.address
 
         self_ref = ActorRef(
             _rid=rt.rid,
@@ -743,11 +809,15 @@ class ActorSystem:
             _address=rt.address,
         )
 
+        if rt.name is not None:
+            self._registry[rt.name] = rt.address
+
         self._inject_context(rt, self_ref=self_ref)
 
         started = await self._safe_on_start(rt)
         if not started:
             rt.alive = False
+        rt.restarting = False
 
     async def _check_restart_limits(self, rt: _ActorRuntime) -> bool:
         """

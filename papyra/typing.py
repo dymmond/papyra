@@ -28,7 +28,10 @@ class Receives(Protocol[MessageT, ReturnT]):
     -----
     ```python
     class MyMessage: ...
+
+
     class MyReply: ...
+
 
     class MyActor(Actor, Receives[MyMessage, MyReply]):
         async def receive(self, msg: MyMessage) -> MyReply:
