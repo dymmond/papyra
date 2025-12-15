@@ -172,12 +172,15 @@ class ActorSystem:
         if rt is None:
             raise ActorStopped("Actor does not exist.")
 
+        if not rt.alive or rt.stopping:
+            raise ActorStopped("Actor is not running.")
+
         return ActorRef(
             _rid=rt.rid,
             _mailbox_put=rt.mailbox.put,
             _is_alive=lambda: (not self._closed) and rt.alive and (not rt.stopping),
             _dead_letter=self.dead_letters.push,
-            _address=rt.address,
+            _address=address,
         )
 
     async def stop(self, ref: Any) -> None:
