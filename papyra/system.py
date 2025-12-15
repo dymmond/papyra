@@ -39,6 +39,7 @@ class _ActorRuntime:
     - `actor_factory` is kept so we can recreate the actor on RESTART.
     - `policy` is the failure handling policy applied by the parent (or system).
     """
+
     rid: int
     actor_factory: ActorFactory
     actor: Actor
@@ -129,6 +130,8 @@ class ActorSystem:
         """
         Request an actor to stop gracefully.
 
+        This is a *cascading stop*: children are stopped before the parent.
+
         Parameters
         ----------
         ref:
@@ -136,8 +139,8 @@ class ActorSystem:
 
         Notes
         -----
-        - This is idempotent.
-        - Stop is processed in-order with existing messages.
+        - Idempotent.
+        - Stop is processed in-order with existing messages for each actor.
         """
         if self._closed:
             return
@@ -150,16 +153,37 @@ class ActorSystem:
         if rt is None:
             return
 
+        await self._stop_runtime(rt)
+
+    async def _stop_runtime(self, rt: _ActorRuntime, *, _seen: set[int] | None = None) -> None:
+        """
+        Stop an actor runtime and all of its descendants.
+
+        Notes
+        -----
+        - Best-effort: if a mailbox is already closed, we still mark the runtime stopped.
+        - Stop order is children-first to mimic supervision-tree shutdown semantics.
+        - `_seen` prevents cycles (should never happen, but makes it robust).
+        """
+        if _seen is None:
+            _seen = set()
+
+        if rt.rid in _seen:
+            return
+        _seen.add(rt.rid)
+
+        # Stop children first
+        for child in list(rt.children):
+            await self._stop_runtime(child, _seen=_seen)
+
+        # Then stop this actor
         if not rt.alive or rt.stopping:
             return
 
         rt.stopping = True
-
-        # Best-effort: enqueue STOP. If mailbox is already closed, that's fine.
         try:
             await rt.mailbox.put(Envelope(message=STOP, reply=None))
         except Exception:
-            # If we cannot enqueue, force stop semantics.
             rt.alive = False
 
     def _resolve_parent_runtime(self, parent_ref: Optional[Any]) -> Optional[_ActorRuntime]:
@@ -186,7 +210,9 @@ class ActorSystem:
             parent_ref = ActorRef(
                 _rid=rt.parent.rid,
                 _mailbox_put=rt.parent.mailbox.put,
-                _is_alive=lambda: (not self._closed) and rt.parent.alive and (not rt.parent.stopping),
+                _is_alive=lambda: (not self._closed)
+                and rt.parent.alive
+                and (not rt.parent.stopping),
             )
 
         rt.actor._context = ActorContext(system=self, self_ref=self_ref, parent=parent_ref)
@@ -221,6 +247,11 @@ class ActorSystem:
                     await self._handle_failure(rt, e)
 
         finally:
+            try:
+                await self._stop_runtime(rt)
+            except Exception:
+                ...
+
             await self._safe_on_stop(rt)
             rt.alive = False
             await rt.mailbox.aclose()
@@ -358,9 +389,7 @@ class ActorSystem:
         window = rt.policy.within_seconds
 
         # Drop timestamps outside the window
-        rt.restart_timestamps = [
-            t for t in rt.restart_timestamps if (now - t) <= window
-        ]
+        rt.restart_timestamps = [t for t in rt.restart_timestamps if (now - t) <= window]
 
         return len(rt.restart_timestamps) < rt.policy.max_restarts
 
@@ -370,21 +399,22 @@ class ActorSystem:
             return
         self._closed = True
 
-        # Request stop for all actors (best-effort) to encourage on_stop ordering.
-        for rt in self._actors:
-            if rt.alive and not rt.stopping:
-                rt.stopping = True
-                try:
-                    await rt.mailbox.put(Envelope(message=STOP, reply=None))
-                except Exception:
-                    rt.alive = False
+        # Request stop for all root actors and cascade to children.
+        roots = [rt for rt in self._actors if rt.parent is None]
+        for rt in roots:
+            try:
+                await self._stop_runtime(rt)
+            except Exception:
+                pass
 
+        # Force-close all mailboxes to unblock actor loops.
         for rt in self._actors:
             try:
                 await rt.mailbox.aclose()
             except Exception:
                 pass
 
+        # Wait for all actor tasks to finish.
         if self._tg is not None:
             tg = self._tg
             self._tg = None
