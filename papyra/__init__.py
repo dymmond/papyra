@@ -2,10 +2,11 @@ __version__ = "0.1.0"
 
 from .actor import Actor
 from .context import ActorContext
+from .exceptions import ActorStopped, AskTimeout, MailboxClosed, PapyraError
 from .ref import ActorRef
-from .system import ActorSystem
-from .exceptions import PapyraError, ActorStopped, AskTimeout, MailboxClosed
 from .supervision import Strategy, SupervisionPolicy
+from .supervisor import SupervisorDecision
+from .system import ActorSystem
 
 __all__ = [
     "Actor",
@@ -18,4 +19,5 @@ __all__ = [
     "MailboxClosed",
     "Strategy",
     "SupervisionPolicy",
+    "SupervisorDecision",
 ]

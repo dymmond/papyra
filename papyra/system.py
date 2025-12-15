@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 """
 ActorSystem: lifecycle, spawning, and shutdown.
 
@@ -9,17 +10,18 @@ This is the runtime entry-point. It owns:
 """
 
 from dataclasses import dataclass, field
-from typing import Callable, Optional, TypeVar, Any
+from typing import Any, Callable, Optional, TypeVar
 
 import anyio
 import anyio.abc
 
-from ._envelope import Reply, Envelope, STOP
+from ._envelope import STOP, Envelope, Reply
 from .actor import Actor
 from .context import ActorContext
 from .exceptions import ActorStopped
 from .mailbox import Mailbox
 from .supervision import Strategy, SupervisionPolicy
+from .supervisor import SupervisorDecision
 
 A = TypeVar("A", bound=Actor)
 ActorFactory = Callable[[], Actor]
@@ -242,12 +244,35 @@ class ActorSystem:
     async def _handle_failure(self, rt: _ActorRuntime, exc: BaseException) -> None:
         """
         Apply supervision policy for a failed actor runtime.
+
+        Order of evaluation
+        -------------------
+        1. Notify parent via `on_child_failure(...)`
+        2. If parent returns a decision, obey it
+        3. Otherwise, fall back to child's SupervisionPolicy
         """
-        # If a stop is already requested, treat failure as stop.
+
+        # If already stopping, do nothing further
         if rt.stopping:
             rt.alive = False
             return
 
+        # --- 1. Parent callback ---
+        if rt.parent is not None:
+            parent_actor = rt.parent.actor
+            try:
+                decision = await parent_actor.on_child_failure(
+                    child_ref=rt.actor._context.self_ref,
+                    exc=exc,
+                )
+            except Exception:
+                decision = None
+
+            if decision is not None:
+                await self._apply_supervisor_decision(rt, decision, exc)
+                return
+
+        # --- 2. Fallback to policy ---
         strategy = rt.policy.strategy
 
         if strategy is Strategy.ESCALATE:
@@ -263,47 +288,81 @@ class ActorSystem:
             return
 
         if strategy is Strategy.RESTART:
-            can_restart = await self._check_restart_limits(rt)
-            if not can_restart:
-                rt.alive = False
-                return
-
-            await self._safe_on_stop(rt)
-
-            # Replace actor instance
-            rt.actor = rt.actor_factory()
-
-            # Clear stopping flag (restart implies running again)
-            rt.stopping = False
-
-            # Re-inject context for the new instance (same self ref)
-            from .ref import ActorRef
-
-            self_ref = ActorRef(
-                _rid=rt.rid,
-                _mailbox_put=rt.mailbox.put,
-                _is_alive=lambda: (not self._closed) and rt.alive and (not rt.stopping),
-            )
-            self._inject_context(rt, self_ref=self_ref)
-
-            started = await self._safe_on_start(rt)
-            if not started:
-                rt.alive = False
+            await self._restart_actor(rt)
             return
 
         rt.alive = False
+
+    async def _apply_supervisor_decision(
+        self,
+        rt: _ActorRuntime,
+        decision,
+        exc: BaseException,
+    ) -> None:
+        """Apply a SupervisorDecision returned by a parent actor."""
+
+        if decision is SupervisorDecision.IGNORE:
+            rt.alive = False
+            return
+
+        if decision is SupervisorDecision.STOP:
+            rt.alive = False
+            return
+
+        if decision is SupervisorDecision.RESTART:
+            await self._restart_actor(rt)
+            return
+
+        if decision is SupervisorDecision.ESCALATE:
+            if rt.parent is None:
+                rt.alive = False
+                return
+            await self._handle_failure(rt.parent, exc)
+            rt.alive = False
+            return
+
+        rt.alive = False
+
+    async def _restart_actor(self, rt: _ActorRuntime) -> None:
+        """Restart an actor instance while preserving its mailbox and ActorRef."""
+        can_restart = await self._check_restart_limits(rt)
+        if not can_restart:
+            rt.alive = False
+            rt.stopping = True
+            await rt.mailbox.aclose()
+            return
+
+        await self._safe_on_stop(rt)
+        rt.restart_timestamps.append(anyio.current_time())
+
+        rt.actor = rt.actor_factory()
+        rt.stopping = False
+
+        from .ref import ActorRef
+
+        self_ref = ActorRef(
+            _rid=rt.rid,
+            _mailbox_put=rt.mailbox.put,
+            _is_alive=lambda: (not self._closed) and rt.alive and (not rt.stopping),
+        )
+
+        self._inject_context(rt, self_ref=self_ref)
+
+        started = await self._safe_on_start(rt)
+        if not started:
+            rt.alive = False
 
     async def _check_restart_limits(self, rt: _ActorRuntime) -> bool:
         """Enforce restart rate limits."""
         now = anyio.current_time()
         window = rt.policy.within_seconds
-        rt.restart_timestamps = [t for t in rt.restart_timestamps if (now - t) <= window]
 
-        if len(rt.restart_timestamps) >= rt.policy.max_restarts:
-            return False
+        # Drop timestamps outside the window
+        rt.restart_timestamps = [
+            t for t in rt.restart_timestamps if (now - t) <= window
+        ]
 
-        rt.restart_timestamps.append(now)
-        return True
+        return len(rt.restart_timestamps) < rt.policy.max_restarts
 
     async def aclose(self) -> None:
         """Gracefully shutdown the actor system."""
