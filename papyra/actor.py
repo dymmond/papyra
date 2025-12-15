@@ -1,9 +1,12 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from .context import ActorContext
 from .supervisor import SupervisorDecision
+
+if TYPE_CHECKING:
+    from . import ActorRef
 
 
 class Actor:
@@ -53,6 +56,20 @@ class Actor:
         """
         return None
 
+    async def on_stop(self) -> None:
+        """
+        Called once when the actor stops.
+
+        This method is guaranteed to be called exactly once, even if
+        `receive(...)` raises an exception.
+
+        Override this method to:
+        - release resources
+        - flush state
+        - perform cleanup
+        """
+        return None
+
     async def receive(self, message: Any) -> Optional[Any]:
         """
         Handle a message.
@@ -69,23 +86,9 @@ class Actor:
         """
         raise NotImplementedError("Actors must implement receive(...)")
 
-    async def on_stop(self) -> None:
-        """
-        Called once when the actor stops.
-
-        This method is guaranteed to be called exactly once, even if
-        `receive(...)` raises an exception.
-
-        Override this method to:
-        - release resources
-        - flush state
-        - perform cleanup
-        """
-        return None
-
     async def on_child_failure(
         self,
-        child_ref,
+        child_ref: "ActorRef",
         exc: BaseException,
     ) -> SupervisorDecision | None:
         """

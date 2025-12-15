@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, Optional, TypeVar
 
 import anyio
 import anyio.abc
@@ -13,6 +13,9 @@ from .exceptions import ActorStopped
 from .mailbox import Mailbox
 from .supervision import Strategy, SupervisionPolicy
 from .supervisor import SupervisorDecision
+
+if TYPE_CHECKING:
+    from .ref import ActorRef
 
 A = TypeVar("A", bound=Actor)
 ActorFactory = Callable[[], Actor]
@@ -96,7 +99,7 @@ class ActorSystem:
         mailbox_capacity: Optional[int] = 1024,
         policy: Optional[SupervisionPolicy] = None,
         parent: Optional[Any] = None,
-    ):
+    ) -> "ActorRef":
         """
         Spawn a new actor and return an ActorRef.
         """
@@ -107,7 +110,7 @@ class ActorSystem:
 
         # Normalize into a zero-arg factory
         if isinstance(actor_factory, type):
-            factory: ActorFactory = actor_factory  # type: ignore[assignment]
+            factory: ActorFactory = actor_factory
         else:
             factory = actor_factory
 
@@ -214,9 +217,7 @@ class ActorSystem:
             if watcher_rt is None or not watcher_rt.alive:
                 continue
             try:
-                await watcher_rt.mailbox.put(
-                    Envelope(message=ActorTerminated(self_ref), reply=None)
-                )
+                await watcher_rt.mailbox.put(Envelope(message=ActorTerminated(self_ref), reply=None))
             except Exception:
                 pass
 
@@ -249,9 +250,7 @@ class ActorSystem:
             parent_ref = ActorRef(
                 _rid=rt.parent.rid,
                 _mailbox_put=rt.parent.mailbox.put,
-                _is_alive=lambda: (not self._closed)
-                and rt.parent.alive
-                and (not rt.parent.stopping),
+                _is_alive=lambda: (not self._closed) and rt.parent.alive and (not rt.parent.stopping),
                 _dead_letter=self.dead_letters.push,
             )
 
@@ -391,12 +390,12 @@ class ActorSystem:
             await self._restart_actor(rt)
             return
 
-        rt.alive = False
+        rt.alive = False  # type: ignore
 
     async def _apply_supervisor_decision(
         self,
         rt: _ActorRuntime,
-        decision,
+        decision: SupervisorDecision,
         exc: BaseException,
     ) -> None:
         """Apply a SupervisorDecision returned by a parent actor."""
@@ -421,7 +420,7 @@ class ActorSystem:
             await self._stop_runtime(rt)
             return
 
-        await self._stop_runtime(rt)
+        await self._stop_runtime(rt)  # type: ignore
 
     async def _restart_actor(self, rt: _ActorRuntime) -> None:
         """Restart an actor instance while preserving its mailbox and ActorRef."""
@@ -477,23 +476,6 @@ class ActorSystem:
             return
         target_rt.watchers.discard(watcher_rt.rid)
 
-    def _record_dead_letter(self, *, ref: Any, message: Any, kind: str) -> None:
-        dl = DeadLetter(
-            ref=ref,
-            message=message,
-            kind=kind,  # type: ignore
-            when=anyio.current_time(),
-        )
-        self._dead_letters.append(dl)
-        if self.on_dead_letter is not None:
-            try:
-                self.on_dead_letter(dl)
-            except Exception:
-                pass
-
-    def dead_letters_snapshot(self) -> list[DeadLetter]:
-        return list(self._dead_letters)
-
     async def aclose(self) -> None:
         """Gracefully shutdown the actor system."""
         if self._closed:
@@ -525,5 +507,5 @@ class ActorSystem:
         await self.start()
         return self
 
-    async def __aexit__(self, exc_type, exc, tb) -> None:
+    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
         await self.aclose()

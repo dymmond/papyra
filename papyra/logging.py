@@ -199,8 +199,8 @@ def setup_logging(logging_config: LoggingConfig | None = None) -> None:
 
     # Use the provided config or instantiate the default StandardLoggingConfig.
     config = logging_config or StandardLoggingConfig()
-    # Call the configure method of the chosen logging config.
 
+    # Call the configure method of the chosen logging config.
     if not config.skip_setup_configure:
         config.configure()
 
