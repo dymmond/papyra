@@ -114,25 +114,34 @@ class ActorSystem:
 
     async def _run_actor(self, rt: _ActorRuntime) -> None:
         """
-        Actor event loop.
+        Actor event loop with lifecycle hooks.
 
-        This function:
-        - reads envelopes from the mailbox,
-        - dispatches to actor.receive(message),
-        - responds to `ask(...)` via the reply channel when present.
+        Execution order
+        ---------------
+        1. actor.on_start()
+        2. message processing loop
+        3. actor.on_stop()
 
-        Failure semantics (for Step 1 / MVP)
-        -----------------------------------
-        Any exception raised by `receive(...)`:
-        - is captured and returned to the `ask(...)` caller (if applicable),
-        - stops the actor afterwards (no restart yet).
+        Failure semantics (Step 2)
+        --------------------------
+        - Exceptions in `receive()` stop the actor
+        - Exceptions in lifecycle hooks do NOT crash the system
+        - `on_stop()` always runs
         """
         try:
+            # --- on_start ---
+            try:
+                await rt.actor.on_start()
+            except Exception:
+                # Lifecycle hooks must never bring down the system
+                rt.alive = False
+                return
+
+            # --- message loop ---
             while not self._closed and rt.alive:
                 try:
                     env = await rt.mailbox.get()
                 except anyio.EndOfStream:
-                    # Mailbox closed and drained: shutdown signal.
                     break
 
                 try:
@@ -140,16 +149,21 @@ class ActorSystem:
                     if env.reply is not None:
                         await env.reply.send(Reply(value=result, error=None))
                 except BaseException as e:
-                    # Reply with error if this was an ask.
                     if env.reply is not None:
                         try:
                             await env.reply.send(Reply(value=None, error=e))
                         except Exception:
-                            # If we can't reply, just drop it.
                             pass
-                    # Stop actor on failure for MVP semantics.
                     rt.alive = False
+                    break
+
         finally:
+            # --- on_stop (guaranteed) ---
+            try:
+                await rt.actor.on_stop()
+            except Exception:
+                pass
+
             rt.alive = False
             await rt.mailbox.aclose()
 
