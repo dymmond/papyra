@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 """
 Actor base class for Papyra.
 
@@ -21,7 +22,9 @@ class Counter(Actor):
 """
 
 from typing import Any, Optional
+
 from .context import ActorContext
+from .supervisor import SupervisorDecision
 
 
 class Actor:
@@ -98,5 +101,20 @@ class Actor:
         - release resources
         - flush state
         - perform cleanup
+        """
+        return None
+
+    async def on_child_failure(
+        self,
+        child_ref,
+        exc: BaseException,
+    ) -> SupervisorDecision | None:
+        """
+        Called when a child actor fails.
+
+        Return a SupervisorDecision to override the child's supervision policy.
+        Return None to defer to the child's SupervisionPolicy.
+
+        Default behaviour: do nothing.
         """
         return None
