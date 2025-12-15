@@ -16,6 +16,7 @@ import anyio.abc
 
 from ._envelope import Reply
 from .actor import Actor
+from .context import ActorContext
 from .exceptions import ActorStopped
 from .mailbox import Mailbox
 from .supervision import Strategy, SupervisionPolicy
@@ -36,11 +37,12 @@ class _ActorRuntime:
     - `actor_factory` is kept so we can recreate the actor on RESTART.
     - `policy` is the failure handling policy applied by the parent (or system).
     """
-
+    rid: int
     actor_factory: ActorFactory
     actor: Actor
     mailbox: Mailbox
     policy: SupervisionPolicy
+
     parent: Optional["_ActorRuntime"] = None
     children: list["_ActorRuntime"] = field(default_factory=list)
 
@@ -73,6 +75,9 @@ class ActorSystem:
         self._tg: anyio.abc.TaskGroup | None = None
         self._closed = False
         self._actors: list[_ActorRuntime] = []
+
+        self._by_id: dict[int, _ActorRuntime] = {}
+        self._next_id: int = 1
 
     async def start(self) -> None:
         """
@@ -131,9 +136,13 @@ class ActorSystem:
         else:
             factory = actor_factory
 
+        rid = self._next_id
+        self._next_id += 1
+
         actor = factory()
 
         rt = _ActorRuntime(
+            rid=rid,
             actor_factory=factory,
             actor=actor,
             mailbox=Mailbox(capacity=mailbox_capacity),
@@ -145,43 +154,55 @@ class ActorSystem:
             rt.parent.children.append(rt)
 
         self._actors.append(rt)
-        self._tg.start_soon(self._run_actor, rt)
+        self._by_id[rid] = rt
 
-        return ActorRef(
+        # Create ref now (needed for context injection)
+        ref = ActorRef(
+            _rid=rid,
             _mailbox_put=rt.mailbox.put,
             _is_alive=lambda: (not self._closed) and rt.alive,
         )
 
-    def _resolve_parent_runtime(self, parent_ref: Optional["AnyActorRef"]) -> Optional[_ActorRuntime]:
-        """
-        Resolve a parent ActorRef to its runtime.
+        # Inject context before running on_start
+        self._inject_context(rt, self_ref=ref)
 
-        We locate the runtime by identity of the mailbox put method.
-        """
+        self._tg.start_soon(self._run_actor, rt)
+        return ref
+
+    def _resolve_parent_runtime(self, parent_ref: Optional[Any]) -> Optional[_ActorRuntime]:
+        """Resolve a parent ActorRef to its runtime using the stable runtime id."""
         if parent_ref is None:
             return None
-
-        mailbox_put = getattr(parent_ref, "_mailbox_put", None)
-        if mailbox_put is None:
+        rid = getattr(parent_ref, "_rid", None)
+        if not isinstance(rid, int):
             return None
+        return self._by_id.get(rid)
 
-        for rt in self._actors:
-            if rt.mailbox.put is mailbox_put:
-                return rt
-        return None
+    def _inject_context(self, rt: _ActorRuntime, *, self_ref: Any) -> None:
+        """
+        Inject ActorContext into the currently installed actor instance.
+
+        This runs:
+        - on initial spawn
+        - on restart (after actor instance replacement)
+        """
+        parent_ref = None
+        if rt.parent is not None:
+            # Recreate a minimal ActorRef to the parent using the parent's mailbox.
+            # (ActorRefs are stable enough for this stage; later we can cache them.)
+            from .ref import ActorRef
+
+            parent_ref = ActorRef(
+                _rid=rt.parent.rid,
+                _mailbox_put=rt.parent.mailbox.put,
+                _is_alive=lambda: (not self._closed) and rt.parent.alive,
+            )
+
+        rt.actor._context = ActorContext(system=self, self_ref=self_ref, parent=parent_ref)
 
     async def _run_actor(self, rt: _ActorRuntime) -> None:
-        """
-        Actor event loop with lifecycle hooks and supervision.
-
-        The loop continues while:
-        - the system is running
-        - the actor is alive
-
-        Failures are handled by `_handle_failure(...)`.
-        """
+        """Actor event loop with lifecycle hooks and supervision."""
         try:
-            # --- on_start ---
             if not await self._safe_on_start(rt):
                 rt.alive = False
                 return
@@ -197,21 +218,18 @@ class ActorSystem:
                     if env.reply is not None:
                         await env.reply.send(Reply(value=result, error=None))
                 except BaseException as e:
-                    # Reply first (ask semantics)
                     if env.reply is not None:
                         try:
                             await env.reply.send(Reply(value=None, error=e))
                         except Exception:
                             pass
-
-                    # Supervision decision
                     await self._handle_failure(rt, e)
 
         finally:
-            # Always stop lifecycle for the currently installed actor instance.
             await self._safe_on_stop(rt)
             rt.alive = False
             await rt.mailbox.aclose()
+
 
     async def _safe_on_start(self, rt: _ActorRuntime) -> bool:
         """Run on_start safely. Returns False if actor should not proceed."""
@@ -233,12 +251,6 @@ class ActorSystem:
     async def _handle_failure(self, rt: _ActorRuntime, exc: BaseException) -> None:
         """
         Apply supervision policy for a failed actor runtime.
-
-        Rules
-        -----
-        - STOP: stop actor
-        - RESTART: restart actor (with restart limits)
-        - ESCALATE: forward to parent; if no parent, STOP
         """
         strategy = rt.policy.strategy
 
@@ -246,9 +258,7 @@ class ActorSystem:
             if rt.parent is None:
                 rt.alive = False
                 return
-            # Escalate to parent by treating parent as "failed".
             await self._handle_failure(rt.parent, exc)
-            # Child stops unless parent restarts it explicitly (not implemented yet).
             rt.alive = False
             return
 
@@ -262,28 +272,30 @@ class ActorSystem:
                 rt.alive = False
                 return
 
-            # Stop the current actor instance (best-effort)
             await self._safe_on_stop(rt)
 
-            # Replace actor instance and start it
+            # Replace actor instance
             rt.actor = rt.actor_factory()
+
+            # Re-inject context for the new instance (same self ref)
+            from .ref import ActorRef
+
+            self_ref = ActorRef(
+                _rid=rt.rid,
+                _mailbox_put=rt.mailbox.put,
+                _is_alive=lambda: (not self._closed) and rt.alive,
+            )
+            self._inject_context(rt, self_ref=self_ref)
+
             started = await self._safe_on_start(rt)
             if not started:
                 rt.alive = False
             return
 
-        # Fallback: safest default is STOP
         rt.alive = False
 
     async def _check_restart_limits(self, rt: _ActorRuntime) -> bool:
-        """
-        Enforce restart rate limits.
-
-        Returns
-        -------
-        bool
-            True if restart is allowed, False if restart budget is exhausted.
-        """
+        """Enforce restart rate limits."""
         now = anyio.current_time()
         window = rt.policy.within_seconds
         rt.restart_timestamps = [t for t in rt.restart_timestamps if (now - t) <= window]
@@ -295,13 +307,7 @@ class ActorSystem:
         return True
 
     async def aclose(self) -> None:
-        """
-        Gracefully shutdown the actor system.
-
-        This:
-        - closes all mailboxes (no new messages),
-        - cancels remaining actor tasks via task group exit.
-        """
+        """Gracefully shutdown the actor system."""
         if self._closed:
             return
         self._closed = True

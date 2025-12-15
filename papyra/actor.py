@@ -21,6 +21,7 @@ class Counter(Actor):
 """
 
 from typing import Any, Optional
+from .context import ActorContext
 
 
 class Actor:
@@ -33,10 +34,32 @@ class Actor:
     - `receive(message)` is called for each incoming message.
     - `on_stop()` is called once when the actor stops (normal or failure).
 
+    Context
+    -------
+    The runtime injects an ActorContext which is accessible via `self.context`.
+
     Notes
     -----
-    Lifecycle hooks are optional. Subclasses may override them.
+    Hooks are optional. Subclasses may override them.
     """
+    _context: ActorContext | None = None
+
+    @property
+    def context(self) -> ActorContext:
+        """
+        Actor runtime context.
+
+        Raises
+        ------
+        RuntimeError
+            If accessed before the runtime has started the actor.
+        """
+        if self._context is None:
+            raise RuntimeError(
+                "ActorContext is not available yet. "
+                "Access `self.context` from on_start/receive/on_stop."
+            )
+        return self._context
 
     async def on_start(self) -> None:
         """
