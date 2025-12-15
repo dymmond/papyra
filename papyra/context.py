@@ -83,3 +83,11 @@ class ActorContext:
             ActorRef to stop.
         """
         await self.system.stop(ref)
+
+    async def watch(self, ref: Any) -> None:
+        """Receive ActorTerminated(ref) when the actor stops."""
+        await self.system._add_watch(self.self_ref, ref)
+
+    async def unwatch(self, ref: Any) -> None:
+        """Stop watching an actor."""
+        await self.system._remove_watch(self.self_ref, ref)

@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 """
 ActorRef: the only way user code interacts with an actor.
 
@@ -13,8 +14,8 @@ from typing import Any, Optional
 
 import anyio
 
-from ._envelope import Envelope, Reply
-from .exceptions import ActorStopped, AskTimeout
+from ._envelope import Envelope
+from .exceptions import ActorStopped, AskTimeout, MailboxClosed
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +32,7 @@ class ActorRef:
     `_rid` is an internal stable identifier used by the system to resolve
     parent/child relationships and future routing features.
     """
+
     _rid: int
     _mailbox_put: Any
     _is_alive: Any
@@ -46,7 +48,11 @@ class ActorRef:
         """
         if not self._is_alive():
             raise ActorStopped("Actor is not running.")
-        await self._mailbox_put(Envelope(message=message, reply=None))
+
+        try:
+            await self._mailbox_put(Envelope(message=message, reply=None))
+        except Exception:
+            raise ActorStopped("Actor is not running.")
 
     async def ask(self, message: Any, *, timeout: Optional[float] = None) -> Any:
         """
@@ -99,4 +105,3 @@ class ActorRef:
         finally:
             await send.aclose()
             await recv.aclose()
-

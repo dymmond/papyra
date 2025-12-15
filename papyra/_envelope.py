@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 """
 Internal message envelope types.
 
@@ -14,6 +15,7 @@ from typing import Any
 import anyio
 import anyio.abc
 
+
 class _Stop:
     """
     Internal stop sentinel.
@@ -26,6 +28,7 @@ class _Stop:
 
     def __repr__(self) -> str:  # pragma: no cover
         return "<PapyraStop>"
+
 
 STOP = _Stop()
 
@@ -65,3 +68,10 @@ class Reply:
 
     value: Any = None
     error: BaseException | None = None
+
+
+@dataclass(frozen=True)
+class ActorTerminated:
+    """System message delivered to watchers when an actor stops."""
+
+    ref: Any
