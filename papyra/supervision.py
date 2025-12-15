@@ -6,15 +6,25 @@ from enum import Enum
 
 class Strategy(str, Enum):
     """
-    Failure handling strategies for a supervised actor.
+    Defines the available directives for handling actor failures within the supervision hierarchy.
 
+    In the actor model, supervision delegates failure handling to the parent actor. This enum
+    represents the set of standard choices a supervisor can make when a child actor crashes
+    (raises an exception).
+
+    Members
+    -------
     STOP
-        Stop the actor when it fails.
+        Instructs the system to permanently stop the failing actor. The actor's post-stop hooks
+        will run, resources will be cleaned up, and the actor will not process any further
+        messages.
     RESTART
-        Restart the actor when it fails (recreate instance using the original factory).
+        Instructs the system to restart the failing actor. This involves suspending the mailbox,
+        stopping the current instance, creating a new instance via the factory, and resuming
+        processing.
     ESCALATE
-        Propagate the failure to the parent supervisor. If there is no parent,
-        the default behavior is to STOP.
+        Instructs the system to bubble the failure up to the parent of the current supervisor.
+        This implies the current supervisor cannot handle the specific error.
     """
 
     STOP = "stop"
@@ -25,18 +35,24 @@ class Strategy(str, Enum):
 @dataclass(frozen=True, slots=True)
 class SupervisionPolicy:
     """
-    Defines how a supervisor handles child failures.
+    Configuration object defining the rules for supervising a child actor.
 
-    Parameters
+    This policy determines how the system reacts when an actor raises an exception. It allows
+    for defining simple behaviors (always stop) or resilient patterns (restart with limits to
+    prevent infinite crash loops).
+
+    Attributes
     ----------
-    strategy:
-        What to do on failure (STOP/RESTART/ESCALATE).
-    max_restarts:
-        Maximum number of restarts allowed within the `within_seconds` window.
-        Only relevant for RESTART.
-    within_seconds:
-        Sliding window size (seconds) used for restart rate limiting.
-        Only relevant for RESTART.
+    strategy : Strategy
+        The primary action to take when a failure occurs (STOP, RESTART, or ESCALATE).
+        Defaults to Strategy.STOP.
+    max_restarts : int
+        The maximum number of times an actor is allowed to restart within the time window
+        defined by `within_seconds`. If this limit is exceeded, the strategy falls back to STOP
+        to prevent infinite restart loops (thrashing). Defaults to 3.
+    within_seconds : float
+        The duration of the sliding window (in seconds) for tracking restart frequency.
+        Defaults to 60.0.
     """
 
     strategy: Strategy = Strategy.STOP
