@@ -14,6 +14,21 @@ from typing import Any
 import anyio
 import anyio.abc
 
+class _Stop:
+    """
+    Internal stop sentinel.
+
+    This must never be exposed as public API. It is used to signal an actor loop
+    to terminate gracefully (ensuring `on_stop()` runs).
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return "<PapyraStop>"
+
+STOP = _Stop()
+
 
 @dataclass(frozen=True, slots=True)
 class Envelope:

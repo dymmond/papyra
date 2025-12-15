@@ -15,7 +15,7 @@ The context is intentionally minimal in Step 4.
 """
 
 from dataclasses import dataclass
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING, Any
 
 if TYPE_CHECKING:  # pragma: no cover
     from .ref import ActorRef
@@ -44,27 +44,13 @@ class ActorContext:
 
     def spawn_child(
         self,
-        actor_factory,
+        actor_factory: Any,
         *,
         mailbox_capacity: int | None = 1024,
         policy: "SupervisionPolicy | None" = None,
     ) -> "ActorRef":
         """
         Spawn a child actor under the current actor.
-
-        Parameters
-        ----------
-        actor_factory:
-            Actor type or zero-arg callable returning an Actor instance.
-        mailbox_capacity:
-            Mailbox buffer size for the child.
-        policy:
-            Supervision policy applied to the child.
-
-        Returns
-        -------
-        ActorRef
-            Reference to the spawned child actor.
         """
         return self.system.spawn(
             actor_factory,
@@ -72,3 +58,28 @@ class ActorContext:
             policy=policy,
             parent=self.self_ref,
         )
+
+    async def stop_self(self) -> None:
+        """
+        Request this actor to stop gracefully.
+
+        Notes
+        -----
+        - This schedules a stop signal into the mailbox.
+        - After stop is requested, further `tell/ask` via ActorRef will raise ActorStopped.
+        - `on_stop()` is guaranteed to run once.
+        """
+        await self.system.stop(self.self_ref)
+
+    async def stop(self, ref: "ActorRef") -> None:
+        """
+        Request another actor to stop gracefully.
+
+        Typically used to stop children.
+
+        Parameters
+        ----------
+        ref:
+            ActorRef to stop.
+        """
+        await self.system.stop(ref)
