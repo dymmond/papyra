@@ -27,17 +27,26 @@ class Actor:
     """
     Base class for actors.
 
-    Contract
-    --------
-    - Actors handle one message at a time (enforced by runtime).
-    - `receive(...)` may mutate actor state.
-    - `receive(...)` may return a value, which is used only by `ask(...)`.
+    Lifecycle
+    ---------
+    - `on_start()` is called once before the first message is processed.
+    - `receive(message)` is called for each incoming message.
+    - `on_stop()` is called once when the actor stops (normal or failure).
 
     Notes
     -----
-    We keep this class minimal. Lifecycle hooks (pre_start, post_stop, etc.)
-    will be added later once supervision lands.
+    Lifecycle hooks are optional. Subclasses may override them.
     """
+
+    async def on_start(self) -> None:
+        """
+        Called once before the actor starts processing messages.
+
+        Override this method to perform initialization logic such as:
+        - opening connections
+        - allocating resources
+        """
+        return None
 
     async def receive(self, message: Any) -> Optional[Any]:
         """
@@ -54,3 +63,17 @@ class Actor:
             A value for request/reply (`ask`). Ignored for `tell`.
         """
         raise NotImplementedError("Actors must implement receive(...)")
+
+    async def on_stop(self) -> None:
+        """
+        Called once when the actor stops.
+
+        This method is guaranteed to be called exactly once, even if
+        `receive(...)` raises an exception.
+
+        Override this method to:
+        - release resources
+        - flush state
+        - perform cleanup
+        """
+        return None
