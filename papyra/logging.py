@@ -11,94 +11,111 @@ from papyra.protocols.logging import LoggerProtocol
 
 class LoggerProxy:
     """
-    A proxy class that provides access to the real logger instance once it is configured.
+    A thread-safe proxy that defers access to the actual logger implementation until it is
+    configured.
 
-    This allows components to use the `logger` object immediately after import,
-    even if the actual logging configuration (`setup_logging`) hasn't been called
-    yet. The proxy holds a reference to the real logger (`_logger`) and forwards
-    all attribute access (method calls like `info()`, `error()`, etc.) to it.
-    It uses a reentrant lock (`_lock`) to ensure thread-safe binding of the
-    real logger.
+    This proxy allows the global `logger` variable to be imported and used at the module level
+    throughout the codebase without worrying about import order or initialization timing. All
+    attribute access (e.g., `logger.info`, `logger.error`) is intercepted and forwarded to the
+    underlying `LoggerProtocol` instance once it is bound.
+
+    Key Features
+    ------------
+    - **Lazy Initialization**: The actual logger can be set up late in the application startup
+      sequence.
+    - **Auto-Configuration**: If accessed before explicit binding, it triggers a default logging
+      setup to ensure no messages are lost.
+    - **Thread Safety**: Uses a reentrant lock to ensure the logger swap is atomic.
+
+    Attributes
+    ----------
+    _logger : LoggerProtocol | None
+        The actual logger instance. This is `None` until `bind_logger` is called.
+    _lock : threading.RLock
+        A reentrant lock used to synchronize access when binding the logger or lazy-loading
+        defaults.
     """
 
     def __init__(self) -> None:
         """
-        Initializes the LoggerProxy with a placeholder for the real logger and a lock.
+        Initialize the proxy with no bound logger.
         """
-        # Placeholder for the actual logger instance, which will be bound later.
         self._logger: LoggerProtocol | None = None
-        # A reentrant lock to synchronize access to the logger binding.
         self._lock: threading.RLock = threading.RLock()
 
     def bind_logger(self, logger: LoggerProtocol | None) -> None:
         """
-        Binds the actual logger instance to the proxy.
+        Bind a concrete logger implementation to this proxy.
 
-        This method is typically called by `setup_logging` after the logging
-        system has been configured. Access to the internal logger variable
-        is protected by a lock.
+        Once bound, all subsequent calls to the proxy will be forwarded to this instance.
+        This operation is thread-safe.
 
-        Args:
-            logger: The real logger instance (implementing LoggerProtocol) or None.
+        Parameters
+        ----------
+        logger : LoggerProtocol | None
+            The configured logger instance to use. If None is passed, the proxy is effectively
+            reset (though usually this receives a valid logger).
         """
-        # Acquire the lock before modifying the internal logger reference.
         with self._lock:
-            # Assign the provided logger instance.
             self._logger = logger
 
     def __getattr__(self, item: str) -> Any:
         """
-        Intercepts attribute access on the proxy and forwards it to the bound logger.
+        Intercept attribute access to forward calls to the underlying logger.
 
-        If the real logger has not yet been bound (is None), it raises a RuntimeError
-        indicating that logging setup is incomplete. Access to the internal logger
-        variable is protected by a lock.
+        If the logger has not yet been bound, this method automatically triggers `setup_logging`
+        with default settings to prevent runtime errors during early application execution.
 
-        Args:
-            item: The name of the attribute (e.g., a method name like 'info') being accessed.
+        Parameters
+        ----------
+        item : str
+            The name of the attribute or method being accessed (e.g., "info", "debug").
 
-        Returns:
-            The attribute from the bound logger instance.
+        Returns
+        -------
+        Any
+            The corresponding attribute from the bound logger instance.
 
-        Raises:
-            RuntimeError: If the logger has not been bound via `bind_logger`.
+        Raises
+        ------
+        RuntimeError
+            Implicitly, if `setup_logging` fails to bind a logger for some reason, though the
+            auto-setup logic attempts to prevent this.
         """
-        # Check if the real logger has been bound.
         if not self._logger:
-            # Acquire the lock before accessing the internal logger reference.
             with self._lock:
-                # Double-check if the logger is still not bound.
                 if not self._logger:
                     setup_logging()
         return getattr(self._logger, item)
 
 
-# Create a global instance of the LoggerProxy. This instance is used throughout
-# the application to log messages, regardless of when the real logger is configured.
+# Global logger instance used throughout the application.
 logger: LoggerProtocol = cast(LoggerProtocol, LoggerProxy())
 
 
 class LoggingConfig(ABC):
     """
-    Abstract base class defining the interface for logging configuration.
+    Abstract base class for defining logging configurations.
 
-    Concrete logging backends (like standard Python logging, loguru, etc.)
-    should implement this class to provide custom configuration logic.
+    This class serves as a contract for different logging backends (e.g., standard `logging`,
+    `loguru`, `structlog`). Subclasses must implement the logic to configure the backend and
+    retrieve the root logger instance.
 
-    !!! Tip
-        You can create your own `LoggingConfig` subclass to use a different
-        logging library or apply custom formatting, handlers, etc.
-
-    Attributes:
-        __logging_levels__: A class variable listing the valid uppercase string
-                            names for standard logging levels.
-        level: The minimum logging level (e.g., "DEBUG", "INFO") for the
-               root logger. Stored as an uppercase string.
-        options: Additional keyword arguments passed during initialization,
-                 available for subclass use.
+    Attributes
+    ----------
+    __logging_levels__ : list[str]
+        A list of valid standard logging level names (uppercase).
+    level : str
+        The active logging level (e.g., "DEBUG", "INFO") used for configuration.
+    options : dict[str, Any]
+        Arbitrary additional configuration options passed during initialization.
+    skip_setup_configure : bool
+        Flag indicating if the `configure()` step should be skipped (e.g., if the environment
+        is already configured externally).
+    name : str
+        The name of the logger to configure. Defaults to "papyra".
     """
 
-    # Class variable listing valid standard logging level names (uppercase).
     __logging_levels__: list[str] = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 
     def __init__(
@@ -107,35 +124,34 @@ class LoggingConfig(ABC):
             str,
             Doc(
                 """
-                The minimum logging level for the root logger. Must be one of
-                the strings listed in `__logging_levels__`. Defaults to "DEBUG".
+                The minimum logging level to capture. Must be one of the values in
+                `__logging_levels__` (case-insensitive). Defaults to "DEBUG".
                 """
             ),
         ] = "DEBUG",
         **kwargs: Any,
     ) -> None:
         """
-        Initializes the LoggingConfig instance, validating the provided level.
+        Initialize the logging configuration.
 
-        Args:
-            level: The desired logging level as a string. Case-insensitive upon
-                   initialization but stored uppercase.
-            **kwargs: Additional keyword arguments to store in the `options` attribute.
+        Parameters
+        ----------
+        level : str, optional
+            The desired logging level. Defaults to "DEBUG".
+        **kwargs : Any
+            Additional options to be stored in `self.options`.
 
-        Raises:
-            AssertionError: If the provided `level` string is not one of the
-                            valid standard logging levels.
+        Raises
+        ------
+        AssertionError
+            If the provided `level` is not a valid logging level.
         """
-        # Join valid levels for the assertion error message.
         levels: str = ", ".join(self.__logging_levels__)
-        # Assert that the provided level (case-insensitive check) is valid.
         assert (
             level.upper() in self.__logging_levels__
         ), f"'{level}' is not a valid logging level. Available levels: '{levels}'."
 
-        # Store the validated level as uppercase.
         self.level = level.upper()
-        # Store any additional keyword arguments.
         self.options = kwargs
         self.skip_setup_configure: bool = kwargs.get("skip_setup_configure", False)
         self.name = kwargs.get("name", "papyra")
@@ -143,68 +159,56 @@ class LoggingConfig(ABC):
     @abstractmethod
     def configure(self) -> None:
         """
-        Abstract method to configure the logging monkay.settings.
+        Apply the side effects required to configure the logging backend.
 
-        Subclasses must implement this method to apply their specific logging
-        configuration (e.g., setting up handlers, formatters, loggers) using
-        the chosen logging library.
+        This might involve setting up formatters, adding handlers to the root logger, or
+        configuring third-party libraries.
         """
-        # This method must be implemented by subclasses.
         raise NotImplementedError("`configure()` must be implemented in subclasses.")
 
     @abstractmethod
     def get_logger(self) -> Any:
         """
-        Abstract method to return the root logger instance after configuration.
+        Retrieve the configured logger instance.
 
-        Subclasses must implement this method to provide the configured logger
-        instance that will be used by the `LoggerProxy`.
-
-        Returns:
-            The logger instance, which is expected to implement `LoggerProtocol`.
+        Returns
+        -------
+        Any
+            The logger object that adheres to the `LoggerProtocol`.
         """
-        # This method must be implemented by subclasses.
         raise NotImplementedError("`get_logger()` must be implemented in subclasses.")
 
 
 def setup_logging(logging_config: LoggingConfig | None = None) -> None:
     """
-    Sets up the logging system for the application using a provided or default configuration.
+    Initialize and bind the global logging system.
 
-    If a custom `LoggingConfig` instance is provided, its `configure` method is called
-    to set up the logging system. Otherwise, a default `StandardLoggingConfig` is
-    instantiated and used. After configuration, the logger instance obtained from
-    `get_logger` is bound to the global `logger` proxy.
+    This function serves as the entry point for configuring application-wide logging.
+    It performs three main steps:
+    1. Selects a configuration strategy (either the provided one or a default standard one).
+    2. Executes the configuration logic (unless skipped).
+    3. Binds the resulting logger to the global `logger` proxy, enabling logging across the app.
 
-    This allows full flexibility to use different logging backends such as
-    the standard Python `logging`, `loguru`, `structlog`, or any custom
-    implementation based on the `LoggingConfig` interface by providing a
-    corresponding `LoggingConfig` subclass instance.
+    Parameters
+    ----------
+    logging_config : LoggingConfig | None, optional
+        A custom configuration instance. If None, `StandardLoggingConfig` is used with default
+        settings. Defaults to None.
 
-    Args:
-        logging_config: An optional instance of a `LoggingConfig` subclass
-                        to customize the logging behavior. If not provided, the
-                        default `StandardLoggingConfig` will be used.
-
-    Raises:
-        ValueError: If the provided `logging_config` is not an instance of
-                    the `LoggingConfig` abstract base class.
+    Raises
+    ------
+    ValueError
+        If the provided `logging_config` is not an instance of the `LoggingConfig` class.
     """
     from papyra.utils.logging import StandardLoggingConfig
 
-    # Check if a logging_config was provided and if it's a valid instance.
     if logging_config is not None and not isinstance(logging_config, LoggingConfig):
-        # Raise an error if the provided object is not a LoggingConfig instance.
         raise ValueError("`logging_config` must be an instance of LoggingConfig.")
 
-    # Use the provided config or instantiate the default StandardLoggingConfig.
     config = logging_config or StandardLoggingConfig()
 
-    # Call the configure method of the chosen logging config.
     if not config.skip_setup_configure:
         config.configure()
 
-    # Get the logger instance from the configured object.
     _logger = config.get_logger()
-    # Bind the obtained logger instance to the global logger proxy.
     logger.bind_logger(_logger)
