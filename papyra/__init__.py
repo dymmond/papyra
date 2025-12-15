@@ -1,12 +1,14 @@
 __version__ = "0.1.0"
 
+from ._envelope import DeadLetter
 from .actor import Actor
 from .context import ActorContext
 from .exceptions import ActorStopped, AskTimeout, MailboxClosed, PapyraError
-from .ref import ActorRef, DeadLetter
+from .ref import ActorRef
 from .supervision import Strategy, SupervisionPolicy
 from .supervisor import SupervisorDecision
 from .system import ActorSystem
+from .typing import Receives, ReceivesAny
 
 __all__ = [
     "Actor",
@@ -21,4 +23,6 @@ __all__ = [
     "SupervisionPolicy",
     "SupervisorDecision",
     "DeadLetter",
+    "Receives",
+    "ReceivesAny",
 ]

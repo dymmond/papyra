@@ -16,6 +16,8 @@ class LoggerProtocol(Protocol):
     Protocol.
     """
 
+    def bind_logger(self, *args: Any, **kwargs: Any) -> None: ...
+
     def debug(self, msg: str, *args: Any, **kwargs: Any) -> None:
         """
         Logs a message with level DEBUG.
