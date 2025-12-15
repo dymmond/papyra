@@ -4,6 +4,7 @@ from papyra import Actor, ActorSystem
 
 pytestmark = pytest.mark.anyio
 
+
 class LifecycleActor(Actor):
     def __init__(self) -> None:
         self.events: list[str] = []

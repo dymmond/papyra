@@ -1,26 +1,12 @@
 from __future__ import annotations
-"""
-Actor context for Papyra.
-
-Actors should not reach into the ActorSystem directly via globals or singletons.
-Instead, the runtime injects an ActorContext into each actor instance.
-
-This enables:
-- accessing `self` ActorRef (address)
-- accessing the parent ActorRef (if any)
-- spawning children in a structured way
-- (later) tracing, deadlines, cancellation, supervision signals, etc.
-
-The context is intentionally minimal in Step 4.
-"""
 
 from dataclasses import dataclass
-from typing import Optional, TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:  # pragma: no cover
     from .ref import ActorRef
-    from .system import ActorSystem
     from .supervision import SupervisionPolicy
+    from .system import ActorSystem
 
 
 @dataclass(frozen=True, slots=True)

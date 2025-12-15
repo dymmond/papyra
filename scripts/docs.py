@@ -80,9 +80,7 @@ def get_updated_config_content() -> dict[str, Any]:
 
     # Load local language names from language_names.yml
     language_names_path = Path(__file__).parent / "../docs/language_names.yml"
-    local_language_names: dict[str, str] = mkdocs.utils.yaml_load(
-        language_names_path.read_text(encoding="utf-8")
-    )
+    local_language_names: dict[str, str] = mkdocs.utils.yaml_load(language_names_path.read_text(encoding="utf-8"))
 
     # Add alternate language links to the configuration
     for lang_path in get_lang_paths():

@@ -1,21 +1,12 @@
 from __future__ import annotations
 
-"""
-ActorRef: the only way user code interacts with an actor.
-
-An ActorRef is an address/handle to an actor. It intentionally hides actor
-implementation details and prevents direct calls into actor state.
-
-This is critical for maintaining isolation and message-driven semantics.
-"""
-
 from dataclasses import dataclass
 from typing import Any, Optional
 
 import anyio
 
 from ._envelope import Envelope
-from .exceptions import ActorStopped, AskTimeout, MailboxClosed
+from .exceptions import ActorStopped, AskTimeout
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,7 +43,7 @@ class ActorRef:
         try:
             await self._mailbox_put(Envelope(message=message, reply=None))
         except Exception:
-            raise ActorStopped("Actor is not running.")
+            raise ActorStopped("Actor is not running.") from None
 
     async def ask(self, message: Any, *, timeout: Optional[float] = None) -> Any:
         """

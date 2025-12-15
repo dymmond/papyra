@@ -4,6 +4,7 @@ from papyra import Actor, ActorSystem, Strategy, SupervisionPolicy
 
 pytestmark = pytest.mark.anyio
 
+
 class FlakyCounter(Actor):
     """
     Actor that crashes on "boom" and otherwise counts increments.

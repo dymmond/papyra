@@ -1,21 +1,12 @@
 from __future__ import annotations
 
-"""
-ActorSystem: lifecycle, spawning, and shutdown.
-
-This is the runtime entry-point. It owns:
-- the task group where actors run,
-- references to live actors,
-- shutdown semantics.
-"""
-
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional, TypeVar
 
 import anyio
 import anyio.abc
 
-from ._envelope import STOP, Envelope, Reply, ActorTerminated
+from ._envelope import STOP, ActorTerminated, Envelope, Reply
 from .actor import Actor
 from .context import ActorContext
 from .exceptions import ActorStopped
@@ -197,9 +188,7 @@ class ActorSystem:
             if watcher_rt is None or not watcher_rt.alive:
                 continue
             try:
-                await watcher_rt.mailbox.put(
-                    Envelope(message=ActorTerminated(self_ref), reply=None)
-                )
+                await watcher_rt.mailbox.put(Envelope(message=ActorTerminated(self_ref), reply=None))
             except Exception:
                 pass
 
@@ -232,9 +221,7 @@ class ActorSystem:
             parent_ref = ActorRef(
                 _rid=rt.parent.rid,
                 _mailbox_put=rt.parent.mailbox.put,
-                _is_alive=lambda: (not self._closed)
-                and rt.parent.alive
-                and (not rt.parent.stopping),
+                _is_alive=lambda: (not self._closed) and rt.parent.alive and (not rt.parent.stopping),
             )
 
         rt.actor._context = ActorContext(system=self, self_ref=self_ref, parent=parent_ref)

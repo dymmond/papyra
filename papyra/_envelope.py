@@ -1,14 +1,5 @@
 from __future__ import annotations
 
-"""
-Internal message envelope types.
-
-These are NOT part of the public API.
-
-The actor model is message-driven. For `ask(...)`, we need a request/reply channel.
-We keep this in an internal module so the external API stays small and stable.
-"""
-
 from dataclasses import dataclass
 from typing import Any
 

@@ -1,16 +1,4 @@
 from __future__ import annotations
-"""
-Supervision primitives for Papyra.
-
-Supervision is the mechanism by which actor failures are handled.
-
-In actor systems inspired by Erlang/Akka, actors do not "catch everything"
-everywhere. Instead, failures are explicit, isolated, and handled by a supervisor.
-
-This module defines:
-- the restart strategy enum
-- the supervision policy (limits, time windows)
-"""
 
 from dataclasses import dataclass
 from enum import Enum

@@ -1,8 +1,9 @@
 import pytest
 
-from papyra import Actor, ActorSystem, ActorStopped
+from papyra import Actor, ActorStopped, ActorSystem
 
 pytestmark = pytest.mark.anyio
+
 
 class StopSelfActor(Actor):
     def __init__(self) -> None:
