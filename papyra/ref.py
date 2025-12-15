@@ -1,21 +1,13 @@
 from __future__ import annotations
 
-"""
-ActorRef: the only way user code interacts with an actor.
-
-An ActorRef is an address/handle to an actor. It intentionally hides actor
-implementation details and prevents direct calls into actor state.
-
-This is critical for maintaining isolation and message-driven semantics.
-"""
-
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Optional
 
 import anyio
 
-from ._envelope import Envelope
-from .exceptions import ActorStopped, AskTimeout, MailboxClosed
+from ._envelope import DeadLetter, Envelope
+from .exceptions import ActorStopped, AskTimeout
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,8 +26,9 @@ class ActorRef:
     """
 
     _rid: int
-    _mailbox_put: Any
-    _is_alive: Any
+    _mailbox_put: Callable[[Envelope], Any]
+    _is_alive: Callable[[], bool]
+    _dead_letter: Callable[[DeadLetter], Any] | None = None
 
     async def tell(self, message: Any) -> None:
         """
@@ -47,12 +40,13 @@ class ActorRef:
             If the actor is not running.
         """
         if not self._is_alive():
+            self._dead_letter_emit(message, expects_reply=False)
             raise ActorStopped("Actor is not running.")
 
         try:
             await self._mailbox_put(Envelope(message=message, reply=None))
         except Exception:
-            raise ActorStopped("Actor is not running.")
+            raise ActorStopped("Actor is not running.") from None
 
     async def ask(self, message: Any, *, timeout: Optional[float] = None) -> Any:
         """
@@ -81,6 +75,7 @@ class ActorRef:
             Re-raises any exception thrown by the actor while processing.
         """
         if not self._is_alive():
+            self._dead_letter_emit(message, expects_reply=True)
             raise ActorStopped("Actor is not running.")
 
         # One-shot reply channel
@@ -105,3 +100,18 @@ class ActorRef:
         finally:
             await send.aclose()
             await recv.aclose()
+
+    def _dead_letter_emit(self, message: Any, *, expects_reply: bool) -> None:
+        if self._dead_letter is None:
+            return
+        try:
+            self._dead_letter(
+                DeadLetter(
+                    target=self,
+                    message=message,
+                    expects_reply=expects_reply,
+                )
+            )
+        except Exception:
+            # Never let dead-letter handling break send semantics
+            return

@@ -1,26 +1,5 @@
 from __future__ import annotations
 
-"""
-Actor base class for Papyra.
-
-An actor encapsulates state and behavior. It processes messages sequentially and
-communicates exclusively by exchanging messages (via ActorRef).
-
-User code should subclass `Actor` and implement `receive(...)`.
-
-Example
--------
-class Counter(Actor):
-    def __init__(self) -> None:
-        self.value = 0
-
-    async def receive(self, message: object) -> object | None:
-        if message == "inc":
-            self.value += 1
-        elif message == "get":
-            return self.value
-"""
-
 from typing import Any, Optional
 
 from .context import ActorContext
@@ -45,6 +24,7 @@ class Actor:
     -----
     Hooks are optional. Subclasses may override them.
     """
+
     _context: ActorContext | None = None
 
     @property
@@ -59,8 +39,7 @@ class Actor:
         """
         if self._context is None:
             raise RuntimeError(
-                "ActorContext is not available yet. "
-                "Access `self.context` from on_start/receive/on_stop."
+                "ActorContext is not available yet. " "Access `self.context` from on_start/receive/on_stop."
             )
         return self._context
 

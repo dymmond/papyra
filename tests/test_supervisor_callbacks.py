@@ -9,6 +9,7 @@ from papyra import (
 
 pytestmark = pytest.mark.anyio
 
+
 class Child(Actor):
     async def receive(self, message):
         if message == "boom":

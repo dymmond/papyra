@@ -1,7 +1,9 @@
 import pytest
+
 from papyra import Actor, ActorSystem
 
 pytestmark = pytest.mark.anyio
+
 
 class Child(Actor):
     async def receive(self, message):

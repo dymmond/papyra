@@ -4,6 +4,7 @@ from papyra import Actor, ActorSystem
 
 pytestmark = pytest.mark.anyio
 
+
 class Counter(Actor):
     def __init__(self) -> None:
         self.value = 0

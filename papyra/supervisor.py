@@ -1,15 +1,5 @@
 from __future__ import annotations
 
-"""
-Supervisor callback primitives.
-
-This module defines the contract between a failing child actor and its parent
-(supervisor).
-
-The parent may override the default supervision policy by implementing
-`on_child_failure(...)`.
-"""
-
 from enum import Enum
 
 

@@ -1,23 +1,4 @@
 from __future__ import annotations
-"""
-Mailbox primitives for Papyra actors.
-
-A mailbox is a FIFO queue of messages. The actor runtime processes messages
-sequentially, one at a time, from the mailbox.
-
-Implementation notes
---------------------
-We use `anyio.create_memory_object_stream` because:
-- it is async-native,
-- works across asyncio/trio backends,
-- supports backpressure with bounded capacity.
-
-We keep a small abstraction layer so we can add:
-- priority mailboxes,
-- persistent mailboxes,
-- metrics,
-without rewriting the runtime.
-"""
 
 from dataclasses import dataclass, field
 from typing import Optional
@@ -26,7 +7,6 @@ import anyio
 
 from ._envelope import Envelope
 from .exceptions import MailboxClosed
-
 
 
 @dataclass(slots=True)
