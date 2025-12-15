@@ -66,3 +66,16 @@ class ActorTerminated:
     """System message delivered to watchers when an actor stops."""
 
     ref: Any
+
+
+@dataclass(frozen=True, slots=True)
+class DeadLetter:
+    """
+    A message sent to an actor that was no longer running.
+
+    This is for diagnostics and observability only.
+    """
+
+    target: Any
+    message: Any
+    expects_reply: bool

@@ -1,16 +1,14 @@
 from __future__ import annotations
 
-from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional, TypeVar
 
 import anyio
 import anyio.abc
 
-from ._envelope import STOP, ActorTerminated, Envelope, Reply
+from ._envelope import STOP, ActorTerminated, DeadLetter, Envelope, Reply
 from .actor import Actor
 from .context import ActorContext
-from .deadletters import DeadLetter
 from .exceptions import ActorStopped
 from .mailbox import Mailbox
 from .supervision import Strategy, SupervisionPolicy
@@ -48,18 +46,40 @@ class _ActorRuntime:
     restart_timestamps: list[float] = field(default_factory=list)
 
 
+class DeadLetterMailbox:
+    """
+    A simple in-memory dead-letter mailbox.
+
+    This is intentionally tiny for Papyra's current phase:
+    - append-only list storage
+    - optional user hook on each dead letter
+    """
+
+    def __init__(self, *, on_dead_letter: Callable[[DeadLetter], None] | None = None) -> None:
+        self._messages: list[DeadLetter] = []
+        self._on_dead_letter = on_dead_letter
+
+    @property
+    def messages(self) -> list[DeadLetter]:
+        return self._messages
+
+    def push(self, dl: DeadLetter) -> None:
+        self._messages.append(dl)
+        if self._on_dead_letter is not None:
+            self._on_dead_letter(dl)
+
+
 class ActorSystem:
     """Root runtime container for actors."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, on_dead_letter: Callable[[DeadLetter], None] | None = None) -> None:
         self._tg: anyio.abc.TaskGroup | None = None
         self._closed = False
 
         self._actors: list[_ActorRuntime] = []
         self._by_id: dict[int, _ActorRuntime] = {}
         self._next_id: int = 1
-        self._dead_letters = deque(maxlen=1000)
-        self.on_dead_letter = None
+        self.dead_letters = DeadLetterMailbox(on_dead_letter=on_dead_letter)
 
     async def start(self) -> None:
         """Start the actor system. Must be called before `spawn(...)`."""
@@ -116,7 +136,7 @@ class ActorSystem:
             _rid=rid,
             _mailbox_put=rt.mailbox.put,
             _is_alive=lambda: (not self._closed) and rt.alive and (not rt.stopping),
-            _system=self,
+            _dead_letter=self.dead_letters.push,
         )
 
         self._inject_context(rt, self_ref=ref)
@@ -186,6 +206,7 @@ class ActorSystem:
             _rid=rt.rid,
             _mailbox_put=rt.mailbox.put,
             _is_alive=lambda: False,
+            _dead_letter=self.dead_letters.push,
         )
 
         for watcher_rid in list(rt.watchers):
@@ -231,6 +252,7 @@ class ActorSystem:
                 _is_alive=lambda: (not self._closed)
                 and rt.parent.alive
                 and (not rt.parent.stopping),
+                _dead_letter=self.dead_letters.push,
             )
 
         rt.actor._context = ActorContext(system=self, self_ref=self_ref, parent=parent_ref)
@@ -282,6 +304,7 @@ class ActorSystem:
                 _rid=rt.rid,
                 _mailbox_put=rt.mailbox.put,
                 _is_alive=lambda: False,
+                _dead_letter=self.dead_letters.push,
             )
 
             # Notify watchers exactly once
@@ -421,6 +444,7 @@ class ActorSystem:
             _rid=rt.rid,
             _mailbox_put=rt.mailbox.put,
             _is_alive=lambda: (not self._closed) and rt.alive and (not rt.stopping),
+            _dead_letter=self.dead_letters.push,
         )
 
         self._inject_context(rt, self_ref=self_ref)

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Optional
 
 import anyio
 
-from ._envelope import Envelope
+from ._envelope import DeadLetter, Envelope
 from .exceptions import ActorStopped, AskTimeout
 
 
@@ -25,9 +26,9 @@ class ActorRef:
     """
 
     _rid: int
-    _mailbox_put: Any
-    _is_alive: Any
-    _system: Any | None = None
+    _mailbox_put: Callable[[Envelope], Any]
+    _is_alive: Callable[[], bool]
+    _dead_letter: Callable[[DeadLetter], Any] | None = None
 
     async def tell(self, message: Any) -> None:
         """
@@ -39,6 +40,7 @@ class ActorRef:
             If the actor is not running.
         """
         if not self._is_alive():
+            self._dead_letter_emit(message, expects_reply=False)
             raise ActorStopped("Actor is not running.")
 
         try:
@@ -73,6 +75,7 @@ class ActorRef:
             Re-raises any exception thrown by the actor while processing.
         """
         if not self._is_alive():
+            self._dead_letter_emit(message, expects_reply=True)
             raise ActorStopped("Actor is not running.")
 
         # One-shot reply channel
@@ -97,3 +100,18 @@ class ActorRef:
         finally:
             await send.aclose()
             await recv.aclose()
+
+    def _dead_letter_emit(self, message: Any, *, expects_reply: bool) -> None:
+        if self._dead_letter is None:
+            return
+        try:
+            self._dead_letter(
+                DeadLetter(
+                    target=self,
+                    message=message,
+                    expects_reply=expects_reply,
+                )
+            )
+        except Exception:
+            # Never let dead-letter handling break send semantics
+            return
