@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional, TypeVar
 
@@ -9,6 +10,7 @@ import anyio.abc
 from ._envelope import STOP, ActorTerminated, Envelope, Reply
 from .actor import Actor
 from .context import ActorContext
+from .deadletters import DeadLetter
 from .exceptions import ActorStopped
 from .mailbox import Mailbox
 from .supervision import Strategy, SupervisionPolicy
@@ -56,6 +58,8 @@ class ActorSystem:
         self._actors: list[_ActorRuntime] = []
         self._by_id: dict[int, _ActorRuntime] = {}
         self._next_id: int = 1
+        self._dead_letters = deque(maxlen=1000)
+        self.on_dead_letter = None
 
     async def start(self) -> None:
         """Start the actor system. Must be called before `spawn(...)`."""
@@ -112,6 +116,7 @@ class ActorSystem:
             _rid=rid,
             _mailbox_put=rt.mailbox.put,
             _is_alive=lambda: (not self._closed) and rt.alive and (not rt.stopping),
+            _system=self,
         )
 
         self._inject_context(rt, self_ref=ref)
@@ -188,7 +193,9 @@ class ActorSystem:
             if watcher_rt is None or not watcher_rt.alive:
                 continue
             try:
-                await watcher_rt.mailbox.put(Envelope(message=ActorTerminated(self_ref), reply=None))
+                await watcher_rt.mailbox.put(
+                    Envelope(message=ActorTerminated(self_ref), reply=None)
+                )
             except Exception:
                 pass
 
@@ -221,7 +228,9 @@ class ActorSystem:
             parent_ref = ActorRef(
                 _rid=rt.parent.rid,
                 _mailbox_put=rt.parent.mailbox.put,
-                _is_alive=lambda: (not self._closed) and rt.parent.alive and (not rt.parent.stopping),
+                _is_alive=lambda: (not self._closed)
+                and rt.parent.alive
+                and (not rt.parent.stopping),
             )
 
         rt.actor._context = ActorContext(system=self, self_ref=self_ref, parent=parent_ref)
@@ -443,6 +452,23 @@ class ActorSystem:
         if watcher_rt is None or target_rt is None:
             return
         target_rt.watchers.discard(watcher_rt.rid)
+
+    def _record_dead_letter(self, *, ref: Any, message: Any, kind: str) -> None:
+        dl = DeadLetter(
+            ref=ref,
+            message=message,
+            kind=kind,  # type: ignore
+            when=anyio.current_time(),
+        )
+        self._dead_letters.append(dl)
+        if self.on_dead_letter is not None:
+            try:
+                self.on_dead_letter(dl)
+            except Exception:
+                pass
+
+    def dead_letters_snapshot(self) -> list[DeadLetter]:
+        return list(self._dead_letters)
 
     async def aclose(self) -> None:
         """Gracefully shutdown the actor system."""

@@ -27,6 +27,7 @@ class ActorRef:
     _rid: int
     _mailbox_put: Any
     _is_alive: Any
+    _system: Any | None = None
 
     async def tell(self, message: Any) -> None:
         """
