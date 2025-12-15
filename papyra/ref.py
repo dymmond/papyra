@@ -7,6 +7,7 @@ from typing import Any, Optional
 import anyio
 
 from ._envelope import DeadLetter, Envelope
+from .address import ActorAddress
 from .exceptions import ActorStopped, AskTimeout
 
 
@@ -15,30 +16,24 @@ class ActorRef:
     """
     Reference to a running actor.
 
-    Notes
-    -----
-    ActorRef is intentionally small:
-    - `tell(...)` sends a message and does not wait for a response.
-    - `ask(...)` sends a message and waits for one response.
-
-    `_rid` is an internal stable identifier used by the system to resolve
-    parent/child relationships and future routing features.
+    Phase 11:
+    - Carries a stable ActorAddress
+    - Address is serializable and transport-ready
     """
 
     _rid: int
     _mailbox_put: Callable[[Envelope], Any]
     _is_alive: Callable[[], bool]
     _dead_letter: Callable[[DeadLetter], Any] | None = None
+    _address: ActorAddress | None = None
+
+    @property
+    def address(self) -> ActorAddress:
+        if self._address is None:
+            raise RuntimeError("ActorRef has no address bound")
+        return self._address
 
     async def tell(self, message: Any) -> None:
-        """
-        Send a message without expecting a reply.
-
-        Raises
-        ------
-        ActorStopped
-            If the actor is not running.
-        """
         if not self._is_alive():
             self._dead_letter_emit(message, expects_reply=False)
             raise ActorStopped("Actor is not running.")
@@ -49,36 +44,10 @@ class ActorRef:
             raise ActorStopped("Actor is not running.") from None
 
     async def ask(self, message: Any, *, timeout: Optional[float] = None) -> Any:
-        """
-        Send a message and await a reply.
-
-        Parameters
-        ----------
-        message:
-            The message to deliver.
-        timeout:
-            Optional timeout (seconds). If set, the caller controls how long
-            they are willing to wait.
-
-        Returns
-        -------
-        Any
-            The value returned by the actor's `receive(...)`.
-
-        Raises
-        ------
-        ActorStopped
-            If the actor is not running.
-        AskTimeout
-            If `timeout` is set and expires before a reply arrives.
-        BaseException
-            Re-raises any exception thrown by the actor while processing.
-        """
         if not self._is_alive():
             self._dead_letter_emit(message, expects_reply=True)
             raise ActorStopped("Actor is not running.")
 
-        # One-shot reply channel
         send, recv = anyio.create_memory_object_stream(1)
 
         try:
@@ -113,5 +82,4 @@ class ActorRef:
                 )
             )
         except Exception:
-            # Never let dead-letter handling break send semantics
             return
