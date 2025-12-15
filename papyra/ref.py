@@ -27,10 +27,13 @@ class ActorRef:
     ActorRef is intentionally small:
     - `tell(...)` sends a message and does not wait for a response.
     - `ask(...)` sends a message and waits for one response.
-    """
 
-    _mailbox_put: Any  # Callable[[Envelope], Awaitable[None]]
-    _is_alive: Any  # Callable[[], bool]
+    `_rid` is an internal stable identifier used by the system to resolve
+    parent/child relationships and future routing features.
+    """
+    _rid: int
+    _mailbox_put: Any
+    _is_alive: Any
 
     async def tell(self, message: Any) -> None:
         """
@@ -43,7 +46,6 @@ class ActorRef:
         """
         if not self._is_alive():
             raise ActorStopped("Actor is not running.")
-
         await self._mailbox_put(Envelope(message=message, reply=None))
 
     async def ask(self, message: Any, *, timeout: Optional[float] = None) -> Any:
@@ -76,7 +78,8 @@ class ActorRef:
             raise ActorStopped("Actor is not running.")
 
         # One-shot reply channel
-        send, recv = anyio.create_memory_object_stream()
+        send, recv = anyio.create_memory_object_stream(1)
+
         try:
             await self._mailbox_put(Envelope(message=message, reply=send))
 
