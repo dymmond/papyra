@@ -102,7 +102,7 @@ serve_lang = "hatch run docs:update_languages; scripts/docs.py live --lang {args
 new_lang = "hatch run docs:update_languages; scripts/docs.py new-lang --lang {args}"
 
 [tool.hatch.envs.test]
-features = "testing"
+features = ["testing"]
 
 [tool.hatch.envs.test.scripts]
 test = "hatch test -- {args}"
