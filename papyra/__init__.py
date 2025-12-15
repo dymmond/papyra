@@ -4,6 +4,7 @@ from .actor import Actor
 from .ref import ActorRef
 from .system import ActorSystem
 from .exceptions import PapyraError, ActorStopped, AskTimeout, MailboxClosed
+from .supervision import Strategy, SupervisionPolicy
 
 __all__ = [
     "Actor",
@@ -13,4 +14,6 @@ __all__ = [
     "ActorStopped",
     "AskTimeout",
     "MailboxClosed",
+    "Strategy",
+    "SupervisionPolicy",
 ]
