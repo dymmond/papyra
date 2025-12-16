@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import contextlib
 import inspect
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, TypeVar, cast
 
 import anyio
 import anyio.abc
@@ -255,10 +256,8 @@ class ActorSystem:
         self._events.append(event)
         self._dispatch_hook("on_event", event)
 
-        try:
+        with contextlib.suppress(Exception):
             self._event_send.send_nowait(event)
-        except Exception:
-            pass
 
     async def wait_for_event(
         self,
@@ -319,7 +318,7 @@ class ActorSystem:
         with anyio.fail_after(timeout):
             async for event in self._event_recv:
                 if matches(event):
-                    return event
+                    return cast(ActorEvent, event)
 
                 # IMPORTANT:
                 # Deterministic safety net: re-scan event log
@@ -761,11 +760,8 @@ class ActorSystem:
         """
         # 1. Invoke the specific callback provided during ActorSystem initialization (if any).
         if self._user_on_dead_letter is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self._user_on_dead_letter(dl)
-            except Exception:
-                # Suppress errors from the user callback to prevent system crash.
-                pass
 
         # 2. Broadcast the dead letter event to any registered system hooks.
         self._dispatch_hook("on_dead_letter", dl)
@@ -874,10 +870,9 @@ class ActorSystem:
             watcher_rt = self._by_id.get(watcher_rid)
             if watcher_rt is None or not watcher_rt.alive:
                 continue
-            try:
+
+            with contextlib.suppress(Exception):
                 await watcher_rt.mailbox.put(Envelope(message=ActorTerminated(self_ref), reply=None))
-            except Exception:
-                pass
 
         try:
             await rt.mailbox.put(Envelope(message=STOP, reply=None))
@@ -978,10 +973,8 @@ class ActorSystem:
                     await self._handle_failure(rt, e)
 
                     if env.reply is not None:
-                        try:
+                        with contextlib.suppress(Exception):
                             await env.reply.send(Reply(value=None, error=e))
-                        except Exception:
-                            pass
 
                 # If a stop was requested during message handling (e.g. stop_self),
                 # terminate the loop; watcher notification is centralized in `finally`.
@@ -1010,15 +1003,14 @@ class ActorSystem:
                 watcher_rt = self._by_id.get(watcher_rid)
                 if watcher_rt is None or not watcher_rt.alive:
                     continue
-                try:
+
+                with contextlib.suppress(Exception):
                     await watcher_rt.mailbox.put(
                         Envelope(
                             message=ActorTerminated(self_ref),
                             reply=None,
                         )
                     )
-                except Exception:
-                    pass
 
             await self._safe_on_stop(rt)
 
@@ -1382,17 +1374,13 @@ class ActorSystem:
         # Request stop for all root actors and cascade to children.
         roots = [rt for rt in self._actors if rt.parent is None]
         for rt in roots:
-            try:
+            with contextlib.suppress(Exception):
                 await self._stop_runtime(rt)
-            except Exception:
-                pass
 
         # Force-close all mailboxes to unblock actor loops.
         for rt in self._actors:
-            try:
+            with contextlib.suppress(Exception):
                 await rt.mailbox.aclose()
-            except Exception:
-                pass
 
         # Wait for all actor tasks to finish.
         if self._tg is not None:
@@ -1400,10 +1388,8 @@ class ActorSystem:
             self._tg = None
             await tg.__aexit__(None, None, None)
 
-        try:
-            await self._event_send.aclose()
-        except Exception:
-            pass
+            with contextlib.suppress(Exception):
+                await self._event_send.aclose()
 
     async def __aenter__(self) -> "ActorSystem":
         """
