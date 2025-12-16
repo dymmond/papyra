@@ -38,7 +38,7 @@ classifiers = [
     "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
     "Topic :: Internet :: WWW/HTTP",
 ]
-dependencies = ["anyio>=4.12.0"]
+dependencies = ["anyio>=4.12.0", "monkay>=0.5.1"]
 keywords = ["papyra"]
 
 [project.urls]
@@ -101,6 +101,13 @@ serve = "hatch run docs:update_languages; scripts/docs.py live"
 dev = "hatch run docs:update_languages; scripts/docs.py serve"
 serve_lang = "hatch run docs:update_languages; scripts/docs.py live --lang {args}"
 new_lang = "hatch run docs:update_languages; scripts/docs.py new-lang --lang {args}"
+
+[tool.hatch.envs.hatch-test]
+features = ["testing"]
+template = "test"
+
+[tool.hatch.envs.hatch-test.env-vars]
+PAPYRA_SETTINGS_MODULE = "tests.settings.AppTestSettings"
 
 [tool.hatch.envs.test]
 features = ["testing"]

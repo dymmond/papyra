@@ -1,15 +1,23 @@
+from typing import TYPE_CHECKING
+
+from .monkay import create_monkay
+
 __version__ = "0.1.0"
 
-from ._envelope import DeadLetter
-from .actor import Actor
-from .audit import ActorInfo, AuditReport
-from .context import ActorContext
-from .exceptions import ActorStopped, AskTimeout, MailboxClosed, PapyraError
-from .ref import ActorRef
-from .supervision import Strategy, SupervisionPolicy
-from .supervisor import SupervisorDecision
-from .system import ActorSystem
-from .typing import Receives, ReceivesAny
+if TYPE_CHECKING:
+    from ._envelope import DeadLetter
+    from .actor import Actor
+    from .audit import ActorInfo, AuditReport
+    from .conf import settings
+    from .conf.global_settings import Settings
+    from .context import ActorContext
+    from .exceptions import ActorStopped, AskTimeout, MailboxClosed, PapyraError
+    from .ref import ActorRef
+    from .supervision import Strategy, SupervisionPolicy
+    from .supervisor import SupervisorDecision
+    from .system import ActorSystem
+    from .typing import Receives, ReceivesAny
+
 
 __all__ = [
     "Actor",
@@ -28,4 +36,9 @@ __all__ = [
     "DeadLetter",
     "Receives",
     "ReceivesAny",
+    "Settings",
+    "settings",
 ]
+
+monkay = create_monkay(globals())
+del create_monkay
