@@ -268,6 +268,13 @@ class ActorSystem:
         else:
             factory = actor_factory
 
+        if policy is None:
+            policy = (
+                SupervisionPolicy(strategy=Strategy.RESTART)
+                if name is not None
+                else SupervisionPolicy(strategy=Strategy.STOP)
+            )
+
         rid = self._next_id
         self._next_id += 1
 
@@ -281,7 +288,7 @@ class ActorSystem:
             actor_factory=factory,
             actor=actor,
             mailbox=mailbox,
-            policy=policy or SupervisionPolicy(strategy=Strategy.STOP),
+            policy=policy,
             parent=self._resolve_parent_runtime(parent),
             address=address,
             name=name,

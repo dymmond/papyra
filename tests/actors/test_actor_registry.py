@@ -41,7 +41,7 @@ async def test_name_removed_after_actor_stops():
             system.ref_for_name("gone")
 
 
-async def xtest_name_survives_actor_restart():
+async def test_name_survives_actor_restart():
     async with ActorSystem() as system:
         ref = system.spawn(Worker, name="svc")
 
