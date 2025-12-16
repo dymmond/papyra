@@ -2,6 +2,7 @@ __version__ = "0.1.0"
 
 from ._envelope import DeadLetter
 from .actor import Actor
+from .audit import ActorInfo, AuditReport
 from .context import ActorContext
 from .exceptions import ActorStopped, AskTimeout, MailboxClosed, PapyraError
 from .ref import ActorRef
@@ -15,6 +16,8 @@ __all__ = [
     "ActorContext",
     "ActorRef",
     "ActorSystem",
+    "ActorInfo",
+    "AuditReport",
     "PapyraError",
     "ActorStopped",
     "AskTimeout",
