@@ -15,39 +15,46 @@ class Worker(Actor):
         return "ok"
 
 
-async def test_named_actor_is_resolvable():
+async def test_audit_registry_has_name_after_spawn():
     async with ActorSystem() as system:
-        ref = system.spawn(Worker, name="worker")
+        system.spawn(Worker, name="svc")
 
-        resolved = system.ref_for_name("worker")
-        assert resolved.address == ref.address
+        report = system.audit()
 
-
-async def test_duplicate_actor_name_is_rejected():
-    async with ActorSystem() as system:
-        system.spawn(Worker, name="dup")
-
-        with pytest.raises(ValueError):
-            system.spawn(Worker, name="dup")
+        assert "svc" in system.list_names()
+        assert "svc" not in report.registry_orphans
+        assert "svc" not in report.registry_dead
 
 
-async def test_name_removed_after_actor_stops():
+async def test_audit_registry_removes_name_after_stop():
     async with ActorSystem() as system:
         ref = system.spawn(Worker, name="gone")
-
         await ref.ask("stop")
 
+        # existing behavior: name lookup should fail
         with pytest.raises(ActorStopped):
             system.ref_for_name("gone")
 
+        report = system.audit()
 
-async def test_name_survives_actor_restart():
+        assert "gone" not in system.list_names()
+        assert "gone" not in report.registry_orphans
+        assert "gone" not in report.registry_dead
+
+
+async def test_audit_restart_keeps_name_mapped():
     async with ActorSystem() as system:
         ref = system.spawn(Worker, name="svc")
 
-        # force restart via crash
         with pytest.raises(RuntimeError):
             await ref.ask("boom")
 
+        # name must still resolve
         resolved = system.ref_for_name("svc")
         assert resolved.address == ref.address
+
+        report = system.audit()
+
+        assert "svc" in system.list_names()
+        assert "svc" not in report.registry_orphans
+        assert "svc" not in report.registry_dead

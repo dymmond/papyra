@@ -9,6 +9,7 @@ import anyio.abc
 from ._envelope import STOP, ActorTerminated, DeadLetter, Envelope, Reply
 from .actor import Actor
 from .address import ActorAddress
+from .audit import ActorInfo, AuditReport
 from .context import ActorContext
 from .exceptions import ActorStopped
 from .mailbox import Mailbox
@@ -268,6 +269,13 @@ class ActorSystem:
         else:
             factory = actor_factory
 
+        if policy is None:
+            policy = (
+                SupervisionPolicy(strategy=Strategy.RESTART)
+                if name is not None
+                else SupervisionPolicy(strategy=Strategy.STOP)
+            )
+
         rid = self._next_id
         self._next_id += 1
 
@@ -281,7 +289,7 @@ class ActorSystem:
             actor_factory=factory,
             actor=actor,
             mailbox=mailbox,
-            policy=policy or SupervisionPolicy(strategy=Strategy.STOP),
+            policy=policy,
             parent=self._resolve_parent_runtime(parent),
             address=address,
             name=name,
@@ -431,6 +439,147 @@ class ActorSystem:
             return
 
         await self._stop_runtime(rt)
+
+    def list_names(self) -> dict[str, ActorAddress]:
+        """
+        Retrieve a snapshot of the global name registry.
+
+        This method returns a shallow copy of the internal registry mapping symbolic names to
+        actor addresses. Modifying the returned dictionary does not affect the actual system
+        registry.
+
+        Returns
+        -------
+        dict[str, ActorAddress]
+            A dictionary where keys are the registered actor names and values are their
+            corresponding logical addresses.
+        """
+        return dict(self._registry)
+
+    def list_actors(self, *, alive_only: bool = False) -> tuple[ActorAddress, ...]:
+        """
+        Retrieve the addresses of actors currently managed by the system.
+
+        This provides a way to enumerate all actors, optionally filtering for only those that
+        are currently running (not stopped or stopping).
+
+        Parameters
+        ----------
+        alive_only : bool, optional
+            If True, the returned list will exclude actors that are dead, stopping, or have
+            crashed. Defaults to False (returns all known runtimes).
+
+        Returns
+        -------
+        tuple[ActorAddress, ...]
+            A tuple of `ActorAddress` objects representing the actors found.
+        """
+        if not alive_only:
+            return tuple(rt.address for rt in self._actors)
+        return tuple(rt.address for rt in self._actors if rt.alive and not rt.stopping)
+
+    def actor_info(self, target: Any) -> ActorInfo:
+        """
+        Generate a detailed point-in-time snapshot of a specific actor's state.
+
+        This method is primarily intended for debugging, introspection, and monitoring tools.
+        It resolves the target actor and extracts internal runtime details such as its hierarchy
+        (parent/children), status (alive/stopping), and identity.
+
+        Parameters
+        ----------
+        target : Any
+            The actor to inspect. Can be an `ActorRef`, runtime ID (`int`), `ActorAddress`, or
+            a string representation of an address.
+
+        Returns
+        -------
+        ActorInfo
+            A data object containing the actor's runtime details.
+
+        Raises
+        ------
+        ActorStopped
+            If the actor specified by `target` does not exist in the system (e.g., invalid ID
+            or garbage collected).
+        TypeError
+            If the target cannot be coerced into a valid runtime ID.
+        """
+        rid = self._coerce_rid(target)
+        rt = self._by_id.get(rid)
+        if rt is None:
+            raise ActorStopped("Actor does not exist.")
+
+        parent_rid = rt.parent.rid if rt.parent is not None else None
+        children_rids = tuple(child.rid for child in rt.children)
+
+        return ActorInfo(
+            rid=rt.rid,
+            address=rt.address,
+            name=getattr(rt, "name", None),
+            parent_rid=parent_rid,
+            children_rids=children_rids,
+            alive=rt.alive,
+            stopping=rt.stopping,
+            restarting=getattr(rt, "restarting", False),
+        )
+
+    def audit(self, *, include_actor_details: bool = True) -> AuditReport:
+        """
+        Perform a comprehensive system-wide health check and state audit.
+
+        This method captures the global state of the actor system, counting actors in various
+        lifecycle states and verifying internal invariants. It specifically checks for "registry
+        orphans" (names pointing to non-existent actors) and "dead registry entries" (names
+        pointing to stopped actors), which can indicate leaks or improper cleanup logic.
+
+        Parameters
+        ----------
+        include_actor_details : bool, optional
+            If True, the report will include a detailed `ActorInfo` snapshot for every actor
+            in the system. For systems with thousands of actors, setting this to False is
+            recommended to reduce overhead. Defaults to True.
+
+        Returns
+        -------
+        AuditReport
+            An object containing aggregate statistics, consistency check results, and optional
+            detailed actor snapshots.
+        """
+        total = len(self._actors)
+        alive = sum(1 for rt in self._actors if rt.alive and not rt.stopping)
+        stopping = sum(1 for rt in self._actors if rt.stopping)
+        restarting = sum(1 for rt in self._actors if getattr(rt, "restarting", False))
+
+        registry_orphans: list[str] = []
+        registry_dead: list[str] = []
+
+        for name, addr in self._registry.items():
+            rt = self._by_id.get(addr.actor_id)
+            if rt is None:
+                # The name exists in the registry, but the actor runtime is gone.
+                registry_orphans.append(name)
+                continue
+            # If actor is not running right now, that name is effectively broken/stale.
+            if (not rt.alive) or rt.stopping:
+                registry_dead.append(name)
+
+        actors: tuple[ActorInfo, ...] = ()
+        if include_actor_details:
+            actors = tuple(self.actor_info(rt.rid) for rt in self._actors)
+
+        return AuditReport(
+            system_id=self.system_id,
+            total_actors=total,
+            alive_actors=alive,
+            stopping_actors=stopping,
+            restarting_actors=restarting,
+            registry_size=len(self._registry),
+            registry_orphans=tuple(sorted(registry_orphans)),
+            registry_dead=tuple(sorted(registry_dead)),
+            dead_letters_count=len(self.dead_letters.messages),
+            actors=actors,
+        )
 
     async def _stop_runtime(self, rt: _ActorRuntime, *, _seen: set[int] | None = None) -> None:
         """
@@ -874,6 +1023,57 @@ class ActorSystem:
         if watcher_rt is None or target_rt is None:
             return
         target_rt.watchers.discard(watcher_rt.rid)
+
+    def _coerce_rid(self, target: Any) -> int:
+        """
+        Internal utility method to extract or resolve the integer runtime identifier (RID) from a
+        variety of input types.
+
+        This method serves as a normalization layer, allowing internal API methods to accept
+        raw IDs, addresses, or object references interchangeably without forcing the caller to
+        manually extract the ID.
+
+        Supported Inputs
+        ----------------
+        - ActorRef: Uses the internal `_rid` attribute.
+        - int: Returned as-is (assumed to be the RID).
+        - ActorAddress: Extracts the `actor_id` attribute.
+        - str: Parses the string as an `ActorAddress` and extracts the `actor_id`.
+
+        Parameters
+        ----------
+        target : Any
+            The object, address, or identifier to resolve.
+
+        Returns
+        -------
+        int
+            The resolved integer runtime ID.
+
+        Raises
+        ------
+        TypeError
+            If the provided `target` is not one of the supported types.
+        """
+        # 1. Check for ActorRef (duck typing via _rid attribute)
+        rid = getattr(target, "_rid", None)
+        if isinstance(rid, int):
+            return rid
+
+        # 2. Check if already an int
+        if isinstance(target, int):
+            return target
+
+        # 3. Check for ActorAddress object
+        if isinstance(target, ActorAddress):
+            return target.actor_id
+
+        # 4. Check for string address representation
+        if isinstance(target, str):
+            addr = ActorAddress.parse(target)
+            return addr.actor_id
+
+        raise TypeError(f"Unsupported target type for actor lookup: {type(target)!r}")
 
     async def aclose(self) -> None:
         """
