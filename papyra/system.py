@@ -11,6 +11,13 @@ from .actor import Actor
 from .address import ActorAddress
 from .audit import ActorInfo, AuditReport
 from .context import ActorContext
+from .events import (
+    ActorCrashed,
+    ActorEvent,
+    ActorRestarted,
+    ActorStarted,
+    ActorStopped as ActorStoppedEvent,
+)
 from .exceptions import ActorStopped
 from .mailbox import Mailbox
 from .supervision import Strategy, SupervisionPolicy
@@ -194,7 +201,40 @@ class ActorSystem:
         self._by_id: dict[int, _ActorRuntime] = {}
         self._next_id: int = 1
         self._registry: dict[str, ActorAddress] = {}
+        self._events: list[ActorEvent] = []
         self.dead_letters = DeadLetterMailbox(on_dead_letter=on_dead_letter)
+
+    def events(self) -> tuple[ActorEvent, ...]:
+        """
+        Retrieve a chronological snapshot of all lifecycle events recorded by the system.
+
+        This log includes critical state changes such as actor starts, restarts, stops, and crashes.
+        It is particularly useful for testing supervision strategies (verifying that a specific
+        sequence of failures and restarts occurred) or for debugging complex interaction patterns
+        in a distributed system.
+
+        Returns
+        -------
+        tuple[ActorEvent, ...]
+            A tuple containing `ActorEvent` objects in the exact order they were emitted.
+        """
+        return tuple(self._events)
+
+    def _emit(self, event: ActorEvent) -> None:
+        """
+        Internal hook to record a lifecycle event into the system's event log.
+
+        This method acts as the central sink for all observability events generated during the
+        operation of the actor system. By centralizing event emission here, the system ensures
+        a consistent chronological record of state changes, which is vital for the `events()`
+        snapshot capability used in testing and debugging.
+
+        Parameters
+        ----------
+        event : ActorEvent
+            The specific lifecycle event (e.g., ActorStarted, ActorCrashed) to record.
+        """
+        self._events.append(event)
 
     async def start(self) -> None:
         """
@@ -710,6 +750,8 @@ class ActorSystem:
                 rt.alive = False
                 return
 
+            self._emit(ActorStarted(address=rt.address))
+
             while not self._closed and rt.alive:
                 try:
                     env = await rt.mailbox.get()
@@ -772,6 +814,13 @@ class ActorSystem:
                     pass
 
             await self._safe_on_stop(rt)
+
+            self._emit(
+                ActorStoppedEvent(
+                    address=rt.address,
+                    reason="stopped",
+                )
+            )
             await rt.mailbox.aclose()
 
     async def _safe_on_start(self, rt: _ActorRuntime) -> bool:
@@ -836,6 +885,13 @@ class ActorSystem:
         if rt.stopping:
             rt.alive = False
             return
+
+        self._emit(
+            ActorCrashed(
+                address=rt.address,
+                error=exc,
+            )
+        )
 
         if rt.parent is not None:
             parent_actor = rt.parent.actor
@@ -933,6 +989,13 @@ class ActorSystem:
         from .ref import ActorRef
 
         rt.restarting = True
+
+        self._emit(
+            ActorRestarted(
+                address=rt.address,
+                reason=RuntimeError("actor restarted"),
+            )
+        )
 
         can_restart = await self._check_restart_limits(rt)
         if not can_restart:
