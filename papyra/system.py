@@ -188,6 +188,7 @@ class ActorSystem:
         system_id: str = "local",
         on_dead_letter: Callable[[DeadLetter], None] | None = None,
         hooks: SystemHooks | None = None,
+        time_fn: Callable[[], float] | None = None,
     ) -> None:
         """
         Initialize the ActorSystem.
@@ -210,12 +211,16 @@ class ActorSystem:
         self._by_id: dict[int, _ActorRuntime] = {}
         self._next_id: int = 1
         self._registry: dict[str, ActorAddress] = {}
+
         self._events: list[ActorEvent] = []
+        self._event_send, self._event_recv = anyio.create_memory_object_stream(100)
 
         self.dead_letters = DeadLetterMailbox(on_dead_letter=self._on_dead_letter)
 
         self._hooks: SystemHooks = hooks or DefaultHooks()
         self._user_on_dead_letter = on_dead_letter
+
+        self._time_fn: Callable[[], float] = time_fn or anyio.current_time
 
     def events(self) -> tuple[ActorEvent, ...]:
         """
@@ -249,6 +254,103 @@ class ActorSystem:
         """
         self._events.append(event)
         self._dispatch_hook("on_event", event)
+
+        try:
+            self._event_send.send_nowait(event)
+        except Exception:
+            pass
+
+    async def wait_for_event(
+        self,
+        predicate: Callable[[ActorEvent], bool] | type[ActorEvent],
+        *,
+        timeout: float = 1.0,
+        start_index: int = 0,
+        poll_interval: float = 0.0,
+    ) -> ActorEvent:
+        """
+        Asynchronously wait for a specific lifecycle event to occur in the system.
+
+        This utility is designed primarily for testing and deterministic synchronization. It polls
+        the system's event log until an event matching the provided predicate is found or the
+        timeout expires.
+
+        Parameters
+        ----------
+        predicate : Callable[[ActorEvent], bool] | type[ActorEvent]
+            The condition to wait for.
+            - If a class type (e.g., `ActorStarted`) is provided, it matches the first event
+              instance of that class.
+            - If a callable is provided, it must accept an `ActorEvent` and return `True` for a
+              match.
+        timeout : float, optional
+            The maximum duration (in seconds) to wait before giving up. Defaults to 1.0.
+        start_index : int, optional
+            The index in the event log from which to start searching. This allows the caller to
+            ignore events that happened prior to a specific point in time (e.g., before an action
+            triggered a restart). Defaults to 0.
+        poll_interval : float, optional
+            The sleep duration (in seconds) between checks of the event log. A value of 0.0 yields
+            to the event loop immediately, which is efficient for tests. Defaults to 0.0.
+
+        Returns
+        -------
+        ActorEvent
+            The first event that satisfies the predicate.
+
+        Raises
+        ------
+        TimeoutError
+            If the timeout duration elapses without a matching event appearing.
+        """
+
+        # Normalize the predicate: if a class is passed, create an isinstance check.
+        def matches(event: ActorEvent) -> bool:
+            if isinstance(predicate, type):
+                return isinstance(event, predicate)
+            return predicate(event)
+
+        # 1. Check already-emitted events first
+        for event in self._events[start_index:]:
+            if matches(event):
+                return event
+
+        # 2. Then wait for future events
+        with anyio.fail_after(timeout):
+            async for event in self._event_recv:
+                if matches(event):
+                    return event
+
+                # IMPORTANT:
+                # Deterministic safety net: re-scan event log
+                # in case the event was emitted before we started receiving
+                for e in self._events[start_index:]:
+                    if matches(e):
+                        return e
+
+                if poll_interval:
+                    await anyio.sleep(poll_interval)
+
+        raise TimeoutError
+
+    def now(self) -> float:
+        """
+        Retrieve the current system time as a floating-point timestamp.
+
+        This method abstracts the time source used by the actor system. By default, it delegates
+        to `anyio.current_time()` or `time.time()`. However, the underlying provider (`_time_fn`)
+        can be overridden during initialization to inject a synthetic or frozen clock.
+
+        This dependency injection capability is crucial for writing deterministic unit tests that
+        verify time-dependent behaviors (e.g., supervision restart windows, request timeouts)
+        without relying on fragile `sleep()` calls.
+
+        Returns
+        -------
+        float
+            The current timestamp in seconds (epoch time).
+        """
+        return self._time_fn()
 
     async def start(self) -> None:
         """
@@ -1131,7 +1233,7 @@ class ActorSystem:
             return
 
         await self._safe_on_stop(rt)
-        rt.restart_timestamps.append(anyio.current_time())
+        rt.restart_timestamps.append(self._time_fn())
 
         rt.actor = rt.actor_factory()
         rt.stopping = False
@@ -1170,7 +1272,7 @@ class ActorSystem:
         bool
             True if the restart is within limits, False otherwise.
         """
-        now = anyio.current_time()
+        now = self._time_fn()
         window = rt.policy.within_seconds
 
         # Drop timestamps outside the window
@@ -1297,6 +1399,11 @@ class ActorSystem:
             tg = self._tg
             self._tg = None
             await tg.__aexit__(None, None, None)
+
+        try:
+            await self._event_send.aclose()
+        except Exception:
+            pass
 
     async def __aenter__(self) -> "ActorSystem":
         """
