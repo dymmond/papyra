@@ -32,6 +32,8 @@ def create_monkay(global_dict: dict) -> Monkay[None, Settings]:
             "DeadLetter": "papyra._envelope.DeadLetter",
             "settings": "papyra.conf.settings",
             "Settings": "papyra.conf.global_settings.Settings",
+            "SystemHooks": "papyra.hooks.SystemHooks",
+            "FailureInfo": "papyra.hooks.FailureInfo",
         },
         skip_all_update=True,
         package="papyra",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, TypeVar
 
@@ -19,6 +20,7 @@ from .events import (
     ActorStopped as ActorStoppedEvent,
 )
 from .exceptions import ActorStopped
+from .hooks import DefaultHooks, FailureInfo, SystemHooks
 from .mailbox import Mailbox
 from .supervision import Strategy, SupervisionPolicy
 from .supervisor import SupervisorDecision
@@ -116,7 +118,11 @@ class DeadLetterMailbox:
         to the mailbox.
     """
 
-    def __init__(self, *, on_dead_letter: Callable[[DeadLetter], None] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        on_dead_letter: Callable[[DeadLetter], None] | None = None,
+    ) -> None:
         """
         Initialize the dead-letter mailbox.
 
@@ -181,6 +187,7 @@ class ActorSystem:
         *,
         system_id: str = "local",
         on_dead_letter: Callable[[DeadLetter], None] | None = None,
+        hooks: SystemHooks | None = None,
     ) -> None:
         """
         Initialize the ActorSystem.
@@ -191,6 +198,8 @@ class ActorSystem:
             The identifier for this system, used in actor addresses. Defaults to "local".
         on_dead_letter : Callable[[DeadLetter], None] | None, optional
             A callback invoked when a message is routed to dead letters. Defaults to None.
+        hooks: SystemHooks | None, optional
+            A specialized mailbox where undeliverable messages are routed. Defaults to None.
         """
         self.system_id = system_id
 
@@ -202,7 +211,11 @@ class ActorSystem:
         self._next_id: int = 1
         self._registry: dict[str, ActorAddress] = {}
         self._events: list[ActorEvent] = []
-        self.dead_letters = DeadLetterMailbox(on_dead_letter=on_dead_letter)
+
+        self.dead_letters = DeadLetterMailbox(on_dead_letter=self._on_dead_letter)
+
+        self._hooks: SystemHooks = hooks or DefaultHooks()
+        self._user_on_dead_letter = on_dead_letter
 
     def events(self) -> tuple[ActorEvent, ...]:
         """
@@ -235,6 +248,7 @@ class ActorSystem:
             The specific lifecycle event (e.g., ActorStarted, ActorCrashed) to record.
         """
         self._events.append(event)
+        self._dispatch_hook("on_event", event)
 
     async def start(self) -> None:
         """
@@ -608,7 +622,7 @@ class ActorSystem:
         if include_actor_details:
             actors = tuple(self.actor_info(rt.rid) for rt in self._actors)
 
-        return AuditReport(
+        report = AuditReport(
             system_id=self.system_id,
             total_actors=total,
             alive_actors=alive,
@@ -620,6 +634,97 @@ class ActorSystem:
             dead_letters_count=len(self.dead_letters.messages),
             actors=actors,
         )
+
+        self._dispatch_hook("on_audit", report)
+        return report
+
+    def _on_dead_letter(self, dl: DeadLetter) -> None:
+        """
+        Internal handler invoked whenever a message is classified as a dead letter.
+
+        This method serves as the central processing point for undeliverable messages. It ensures
+        that both the optional user-provided callback (defined at system initialization) and the
+        registered system hooks are notified of the event.
+
+        Error Handling
+        --------------
+        To maintain system stability, any exceptions raised by the user-provided callback are
+        caught and suppressed. This prevents a single logging error from disrupting the core
+        actor machinery.
+
+        Parameters
+        ----------
+        dl : DeadLetter
+            The dead letter object containing the original message and the target actor reference.
+        """
+        # 1. Invoke the specific callback provided during ActorSystem initialization (if any).
+        if self._user_on_dead_letter is not None:
+            try:
+                self._user_on_dead_letter(dl)
+            except Exception:
+                # Suppress errors from the user callback to prevent system crash.
+                pass
+
+        # 2. Broadcast the dead letter event to any registered system hooks.
+        self._dispatch_hook("on_dead_letter", dl)
+
+    def _dispatch_hook(self, name: str, *args: Any) -> None:
+        """
+        Safely execute a registered system hook by name.
+
+        This mechanism allows the system to emit signals to user-defined observers without risking
+        stability. It supports both synchronous and asynchronous hook implementations transparently.
+
+        Execution Logic
+        ---------------
+        1. Attempts to resolve the method `name` on the registered hooks instance.
+        2. If found, invokes the function with `args`.
+        3. If the result is a coroutine (awaitable) and the system task group is active, it
+           schedules the coroutine for background execution.
+
+        Safety
+        ------
+        This method acts as a firewall. Any exception raised during the hook lookup, invocation,
+        or scheduling is caught and silently suppressed. This guarantees that a buggy logging
+        hook or metric collector cannot crash the core actor runtime.
+
+        Parameters
+        ----------
+        name : str
+            The specific hook method name to invoke (e.g., "on_event", "on_dead_letter").
+        *args : Any
+            Variable positional arguments to pass to the hook function.
+        """
+        fn = getattr(self._hooks, name, None)
+        if fn is None:
+            return
+        try:
+            result = fn(*args)
+            # If the hook is async, offload it to the TaskGroup to avoid blocking the loop.
+            if inspect.isawaitable(result) and self._tg is not None:
+                self._tg.start_soon(self._await_hook, result)
+        except Exception:
+            # Hooks must never crash the system, so we suppress all errors here.
+            return
+
+    async def _await_hook(self, awaitable: Any) -> None:
+        """
+        Await an asynchronous hook result within a protected context.
+
+        This wrapper is used when a hook returns an awaitable. It awaits the completion of the
+        coroutine and traps any exceptions that occur during its execution, ensuring they do
+        not propagate up to the `TaskGroup` and cancel the entire system.
+
+        Parameters
+        ----------
+        awaitable : Any
+            The coroutine or awaitable object returned by the hook.
+        """
+        try:
+            await awaitable
+        except Exception:
+            # Suppress exceptions from async hooks to preserve system stability.
+            return
 
     async def _stop_runtime(self, rt: _ActorRuntime, *, _seen: set[int] | None = None) -> None:
         """
@@ -886,6 +991,16 @@ class ActorSystem:
             rt.alive = False
             return
 
+        self._dispatch_hook(
+            "on_failure",
+            FailureInfo(
+                address=rt.address,
+                error=exc,
+                strategy=rt.policy.strategy,
+                supervisor_decision=None,
+            ),
+        )
+
         self._emit(
             ActorCrashed(
                 address=rt.address,
@@ -904,6 +1019,16 @@ class ActorSystem:
                 decision = None
 
             if decision is not None:
+                self._dispatch_hook(
+                    "on_failure",
+                    FailureInfo(
+                        address=rt.address,
+                        error=exc,
+                        strategy=rt.policy.strategy,
+                        supervisor_decision=decision,
+                    ),
+                )
+
                 await self._apply_supervisor_decision(rt, decision, exc)
                 return
 

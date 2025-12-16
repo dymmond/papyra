@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from .conf.global_settings import Settings
     from .context import ActorContext
     from .exceptions import ActorStopped, AskTimeout, MailboxClosed, PapyraError
+    from .hooks import FailureInfo, SystemHooks
     from .ref import ActorRef
     from .supervision import Strategy, SupervisionPolicy
     from .supervisor import SupervisorDecision
@@ -38,6 +39,8 @@ __all__ = [
     "ReceivesAny",
     "Settings",
     "settings",
+    "SystemHooks",
+    "FailureInfo",
 ]
 
 monkay = create_monkay(globals())

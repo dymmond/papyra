@@ -1,0 +1,137 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Awaitable, Protocol, runtime_checkable
+
+from ._envelope import DeadLetter
+from .address import ActorAddress
+from .events import ActorEvent
+from .supervision import Strategy
+from .supervisor import SupervisorDecision
+
+MaybeAwaitable = None | Awaitable[None]
+
+
+@dataclass(frozen=True, slots=True)
+class FailureInfo:
+    """
+    A structured record capturing the context of an actor crash.
+
+    This object is emitted to the monitoring hooks immediately after an actor raises an unhandled
+    exception, but *before* the supervision strategy (e.g., restart, stop) is executed. It
+    provides a complete snapshot of the failure incident for logging or auditing purposes.
+
+    Attributes
+    ----------
+    address : ActorAddress
+        The logical address of the actor that failed.
+    error : BaseException
+        The actual exception object raised by the actor.
+    strategy : Strategy | None, optional
+        The supervision strategy that is about to be applied (if determined). Defaults to None.
+    supervisor_decision : SupervisorDecision | None, optional
+        The explicit decision returned by the parent supervisor, if one was consulted.
+        Defaults to None.
+    """
+
+    address: ActorAddress
+    error: BaseException
+    strategy: Strategy | None = None
+    supervisor_decision: SupervisorDecision | None = None
+
+
+@runtime_checkable
+class SystemHooks(Protocol):
+    """
+    A protocol defining the interface for system-wide observability hooks.
+
+    Users can implement this protocol to plug into the internal lifecycle of the ActorSystem.
+    This is useful for implementing centralized logging, metrics collection, distributed tracing,
+    or audit trails.
+
+    Notes
+    -----
+    - Implementations may be synchronous (returning `None`) or asynchronous (returning an
+      `Awaitable`). The system handles both.
+    - These hooks are executed in the critical path of the actor loop, so they should remain
+      lightweight to avoid performance degradation.
+    """
+
+    def on_event(self, event: ActorEvent) -> MaybeAwaitable:
+        """
+        Called whenever a lifecycle event occurs (e.g., start, stop, restart).
+
+        Parameters
+        ----------
+        event : ActorEvent
+            The event object describing the change in state.
+        """
+        ...
+
+    def on_dead_letter(self, dead_letter: DeadLetter) -> MaybeAwaitable:
+        """
+        Called whenever a message is routed to dead letters.
+
+        Parameters
+        ----------
+        dead_letter : DeadLetter
+            The wrapper containing the undelivered message and target metadata.
+        """
+        ...
+
+    def on_failure(self, failure: FailureInfo) -> MaybeAwaitable:
+        """
+        Called whenever an actor crashes with an exception.
+
+        Parameters
+        ----------
+        failure : FailureInfo
+            Contextual information about the crash, including the error and the actor address.
+        """
+        ...
+
+    def on_audit(self, report: object) -> MaybeAwaitable:
+        """
+        Called when a system audit is requested or generated.
+
+        Parameters
+        ----------
+        report : object
+            The audit report object (typically `AuditReport`) containing system stats.
+            Typed as `object` here to avoid circular dependencies with the system module.
+        """
+        ...
+
+
+@dataclass(slots=True)
+class DefaultHooks:
+    """
+    A default, no-operation implementation of the `SystemHooks` protocol.
+
+    This class is used when no custom hooks are provided to the actor system. It silently
+    discards all signals.
+    """
+
+    def on_event(self, event: ActorEvent) -> None:
+        """
+        Ignore the lifecycle event.
+        """
+        return None
+
+    def on_dead_letter(self, dead_letter: DeadLetter) -> None:
+        """
+        Ignore the dead letter.
+        """
+        return None
+
+    def on_failure(self, failure: FailureInfo) -> None:
+        """
+        Ignore the failure report.
+        """
+        return None
+
+    def on_audit(self, report: object) -> None:
+        """
+        Ignore the audit report.
+        """
+        return None
