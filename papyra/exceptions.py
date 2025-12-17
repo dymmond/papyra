@@ -29,7 +29,9 @@ class ActorStopped(PapyraError):
     feedback if the target is known to be dead.
     """
 
-    ...
+    def __init__(self, message: str = "Actor stopped", *, reason: str | None = None):
+        super().__init__(message)
+        self.reason = reason
 
 
 class AskTimeout(PapyraError):
