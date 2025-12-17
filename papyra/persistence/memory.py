@@ -6,7 +6,13 @@ from typing import Any
 import anyio
 import anyio.abc
 
-from .models import PersistedAudit, PersistedDeadLetter, PersistedEvent, PersistenceScanReport
+from .models import (
+    PersistedAudit,
+    PersistedDeadLetter,
+    PersistedEvent,
+    PersistenceRecoveryReport,
+    PersistenceScanReport,
+)
 
 
 @dataclass(slots=True)
@@ -271,3 +277,7 @@ class InMemoryPersistence:
             backend="memory",
             anomalies=(),
         )
+
+    async def recover(self, config: Any = None) -> PersistenceRecoveryReport:
+        scan = PersistenceScanReport(backend="memory", anomalies=())
+        return PersistenceRecoveryReport(backend="memory", scan=scan)

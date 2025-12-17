@@ -133,6 +133,19 @@ class PersistenceBackend:
         """
         return None
 
+    async def recover(self, config: Any | None = None) -> Any:
+        """
+        Run startup recovery according to the provided configuration.
+
+        This method MAY mutate storage depending on config.mode.
+        Default implementation does nothing.
+
+        Returns
+        -------
+        PersistenceRecoveryReport | None
+        """
+        return None
+
     async def aclose(self) -> None:
         """
         Asynchronously close the persistence backend connection.

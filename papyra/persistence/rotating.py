@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,9 @@ from .models import (
     PersistedEvent,
     PersistenceAnomaly,
     PersistenceAnomalyType,
+    PersistenceRecoveryConfig,
+    PersistenceRecoveryMode,
+    PersistenceRecoveryReport,
     PersistenceScanReport,
 )
 from .retention import RetentionPolicy
@@ -621,13 +625,15 @@ class RotatingFilePersistence(PersistenceBackend):
 
             try:
                 async with await anyio.open_file(p, "r", encoding="utf-8") as file:
-                    async for idx, line in enumerate(file):  # type: ignore
+                    idx = 0
+                    async for line in file:
+                        idx += 1
                         if not line.endswith("\n"):
                             anomalies.append(
                                 PersistenceAnomaly(
                                     type=PersistenceAnomalyType.TRUNCATED_LINE,
                                     path=str(p),
-                                    detail=f"Line {idx + 1} missing newline",
+                                    detail=f"Line {idx} missing newline",
                                 )
                             )
                             break
@@ -639,7 +645,7 @@ class RotatingFilePersistence(PersistenceBackend):
                                 PersistenceAnomaly(
                                     type=PersistenceAnomalyType.CORRUPTED_LINE,
                                     path=str(p),
-                                    detail=f"Invalid JSON at line {idx + 1}",
+                                    detail=f"Invalid JSON at line {idx}",
                                 )
                             )
             except OSError:
@@ -654,4 +660,93 @@ class RotatingFilePersistence(PersistenceBackend):
         return PersistenceScanReport(
             backend="rotating",
             anomalies=tuple(anomalies),
+        )
+
+    async def recover(self, config: Any = None) -> PersistenceRecoveryReport | None:
+        """
+        Recover the rotating log set according to the configured recovery mode.
+
+        Strategy:
+        - Run scan() to detect orphan/unexpected files and corrupted/truncated lines.
+        - If QUARANTINE: move unexpected files aside.
+        - For each expected log file that exists: rewrite it keeping only valid JSON dict lines,
+          stopping at first truncated line.
+        """
+        cfg = config or PersistenceRecoveryConfig()
+        scan = await self.scan()
+        if scan is None:
+            return None
+
+        if cfg.mode is PersistenceRecoveryMode.IGNORE or not scan.has_anomalies:
+            return PersistenceRecoveryReport(backend="rotating", scan=scan)
+
+        repaired_files: list[str] = []
+        quarantined_files: list[str] = []
+
+        # Identify unexpected/orphaned files (same logic as scan)
+        expected = {
+            str(self._path),
+            *(str(self._rotated_path(i)) for i in range(1, self._max_files)),
+        }
+        existing = {str(p) for p in self._path.parent.glob(self._path.name + "*")}
+        unexpected = sorted(existing - expected)
+
+        if cfg.mode is PersistenceRecoveryMode.QUARANTINE and unexpected:
+            qdir = Path(cfg.quarantine_dir) if cfg.quarantine_dir else self._path.parent
+            qdir.mkdir(parents=True, exist_ok=True)
+            stamp = int(time.time() * 1000)
+
+            for p in unexpected:
+                src = Path(p)
+                if not src.exists():
+                    continue
+                qpath = qdir / f"{src.name}.quarantine.{stamp}"
+                os.replace(src, qpath)
+                quarantined_files.append(str(qpath))
+
+        # Rewrite expected files (only those that exist)
+        for p in self._iter_read_paths_oldest_first():  # type: ignore
+            if not p.exists():  # type: ignore
+                continue
+
+            valid_lines: list[str] = []
+
+            try:
+                async with await anyio.open_file(p, "r", encoding="utf-8") as rf:
+                    async for line in rf:
+                        if not line.endswith("\n"):
+                            break
+                        try:
+                            obj = json.loads(line)
+                        except Exception:
+                            continue
+                        if isinstance(obj, dict):
+                            valid_lines.append(json.dumps(obj, default=_json_default) + "\n")
+            except OSError:
+                # If unreadable, treat as fully bad: keep it empty on rewrite
+                valid_lines = []
+
+            # Quarantine original expected file if requested
+            if cfg.mode is PersistenceRecoveryMode.QUARANTINE:
+                qdir = Path(cfg.quarantine_dir) if cfg.quarantine_dir else p.parent  # type: ignore
+                qdir.mkdir(parents=True, exist_ok=True)
+                stamp = int(time.time() * 1000)
+                qpath = qdir / f"{p.name}.quarantine.{stamp}"  # type: ignore
+                os.replace(p, qpath)
+                quarantined_files.append(str(qpath))
+
+            tmp = p.with_suffix(p.suffix + ".recovered.tmp")  # type: ignore
+            async with await anyio.open_file(tmp, "w", encoding="utf-8") as wf:
+                for line in valid_lines:
+                    await wf.write(line)
+                await wf.flush()
+
+            os.replace(tmp, p)
+            repaired_files.append(str(p))
+
+        return PersistenceRecoveryReport(
+            backend="rotating",
+            scan=scan,
+            repaired_files=tuple(repaired_files),
+            quarantined_files=tuple(quarantined_files),
         )

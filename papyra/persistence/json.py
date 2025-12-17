@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, TypeVar
@@ -21,6 +22,9 @@ from .models import (
     PersistedEvent,
     PersistenceAnomaly,
     PersistenceAnomalyType,
+    PersistenceRecoveryConfig,
+    PersistenceRecoveryMode,
+    PersistenceRecoveryReport,
     PersistenceScanReport,
 )
 
@@ -430,14 +434,17 @@ class JsonFilePersistence(PersistenceBackend):
         if not self._path.exists():
             return PersistenceScanReport(backend="json", anomalies=())
 
+        idx = 0
         async with await anyio.open_file(self._path, mode="r", encoding="utf-8") as file:
-            async for idx, line in enumerate(file):  # type: ignore
+            async for line in file:
+                idx += 1
+
                 if not line.endswith("\n"):
                     anomalies.append(
                         PersistenceAnomaly(
                             type=PersistenceAnomalyType.TRUNCATED_LINE,
                             path=str(self._path),
-                            detail=f"Line {idx + 1} missing newline",
+                            detail=f"Line {idx} missing newline",
                         )
                     )
                     break
@@ -449,11 +456,77 @@ class JsonFilePersistence(PersistenceBackend):
                         PersistenceAnomaly(
                             type=PersistenceAnomalyType.CORRUPTED_LINE,
                             path=str(self._path),
-                            detail=f"Invalid JSON at line {idx + 1}",
+                            detail=f"Invalid JSON at line {idx}",
                         )
                     )
 
         return PersistenceScanReport(
             backend="json",
             anomalies=tuple(anomalies),
+        )
+
+    async def recover(self, config: Any = None) -> PersistenceRecoveryReport | None:
+        """
+        Recover the JSON log file according to the configured recovery mode.
+
+        Strategy (safe for append-only NDJSON):
+        - Keep only lines that are valid JSON dicts
+        - Stop at the first truncated line (missing newline) and drop the remainder
+        - Rewrite atomically (or quarantine+rewrite)
+        """
+
+        cfg = config or PersistenceRecoveryConfig()
+        scan = await self.scan()
+        if scan is None:
+            return None
+
+        if cfg.mode is PersistenceRecoveryMode.IGNORE or not scan.has_anomalies:
+            return PersistenceRecoveryReport(backend="json", scan=scan)
+
+        # Build repaired content (valid json lines only, stop on truncation)
+        valid_lines: list[str] = []
+
+        if not self._path.exists():
+            return PersistenceRecoveryReport(backend="json", scan=scan)
+
+        async with await anyio.open_file(self._path, mode="r", encoding="utf-8") as f:
+            async for line in f:
+                if not line.endswith("\n"):
+                    break
+                try:
+                    obj = json.loads(line)
+                except Exception:
+                    continue
+                if isinstance(obj, dict):
+                    valid_lines.append(json.dumps(obj, ensure_ascii=False, default=_json_default) + "\n")
+
+        repaired_files: list[str] = []
+        quarantined_files: list[str] = []
+
+        # Quarantine original if requested
+        if cfg.mode is PersistenceRecoveryMode.QUARANTINE:
+            qdir = Path(cfg.quarantine_dir) if cfg.quarantine_dir else self._path.parent
+            qdir.mkdir(parents=True, exist_ok=True)
+
+            stamp = int(time.time() * 1000)
+            qpath = qdir / f"{self._path.name}.quarantine.{stamp}"
+            os.replace(self._path, qpath)
+            quarantined_files.append(str(qpath))
+
+        # Write repaired file to temp then atomic replace into main path
+        tmp = self._path.with_suffix(self._path.suffix + ".recovered.tmp")
+
+        async with await anyio.open_file(tmp, mode="w", encoding="utf-8") as wf:
+            for line in valid_lines:
+                await wf.write(line)
+            await wf.flush()
+
+        os.replace(tmp, self._path)
+        repaired_files.append(str(self._path))
+
+        return PersistenceRecoveryReport(
+            backend="json",
+            scan=scan,
+            repaired_files=tuple(repaired_files),
+            quarantined_files=tuple(quarantined_files),
         )

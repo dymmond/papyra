@@ -193,3 +193,50 @@ class PersistenceScanReport:
     @property
     def has_anomalies(self) -> bool:
         return bool(self.anomalies)
+
+
+class PersistenceRecoveryMode(Enum):
+    """
+    How startup recovery should behave when anomalies are detected.
+    """
+
+    IGNORE = "ignore"
+    REPAIR = "repair"
+    QUARANTINE = "quarantine"
+
+
+@dataclass(frozen=True)
+class PersistenceRecoveryConfig:
+    """
+    Configuration for startup recovery.
+
+    mode:
+        IGNORE     -> only scan, never mutate
+        REPAIR     -> rewrite in place (atomic replace)
+        QUARANTINE -> move originals aside, then write repaired files
+    quarantine_dir:
+        Optional directory for quarantined files. If not provided, uses the same directory
+        as the target file.
+    """
+
+    mode: PersistenceRecoveryMode = PersistenceRecoveryMode.IGNORE
+    quarantine_dir: str | None = None
+
+
+@dataclass(frozen=True)
+class PersistenceRecoveryReport:
+    """
+    Result of a recovery run.
+
+    repaired_files:
+        Files that were rewritten/repaired.
+    quarantined_files:
+        Files that were moved aside (only in QUARANTINE mode).
+    scan:
+        The scan report that motivated recovery (always included).
+    """
+
+    backend: str
+    scan: PersistenceScanReport
+    repaired_files: tuple[str, ...] = ()
+    quarantined_files: tuple[str, ...] = ()
