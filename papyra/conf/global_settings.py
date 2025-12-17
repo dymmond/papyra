@@ -7,6 +7,7 @@ from types import UnionType
 from typing import TYPE_CHECKING, Annotated, Any, Union, get_args, get_origin, get_type_hints
 
 from papyra import __version__  # noqa
+from papyra.persistence.memory import InMemoryPersistence
 
 if TYPE_CHECKING:
     from papyra.logging import LoggingConfig  # noqa
@@ -220,6 +221,14 @@ class Settings(BaseSettings):
     Standard logging levels include "DEBUG", "INFO", "WARNING", "ERROR",
     and "CRITICAL". This setting determines the verbosity of the application's
     logging output. Defaults to "INFO".
+    """
+    persistence: Any = InMemoryPersistence()
+    """
+    The configured backend for recording system observability data.
+
+    This component is responsible for persisting immutable facts about the system's execution,
+    such as lifecycle events (starts, stops, crashes), periodic health audits, and dead letters.
+    It decouples the active runtime state from the storage of historical operational data.
     """
 
     @property

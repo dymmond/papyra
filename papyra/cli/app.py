@@ -11,7 +11,6 @@ Papyra command line tool allowing to run command line utils
 How to run Papyra native: `papyra <NAME>`.
 
     Example: `papyra inspect`
-
 """
 
 app = Sayer(
