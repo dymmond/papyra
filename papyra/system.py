@@ -19,6 +19,7 @@ from .events import (
     ActorRestarted,
     ActorStarted,
     ActorStopped as ActorStoppedEvent,
+    _serialize_address,
 )
 from .exceptions import ActorStopped
 from .hooks import DefaultHooks, FailureInfo, SystemHooks
@@ -270,13 +271,9 @@ class ActorSystem:
 
         persisted = PersistedEvent(
             system_id=self.system_id,
-            actor_address=event.address,
+            actor_address=cast(ActorAddress, event.address),
             event_type=type(event).__name__,
-            payload={
-                name: getattr(event, name)
-                for name in dir(event)
-                if not name.startswith("_") and name not in ("address",) and not callable(getattr(event, name))
-            },
+            payload=event.payload,
             timestamp=timestamp,
         )
 
@@ -395,7 +392,7 @@ class ActorSystem:
             If the system has already been closed.
         """
         if self._closed:
-            raise ActorStopped("ActorSystem is closed.")
+            raise ActorStopped("ActorSystem is closed.", reason="shutdown")
         if self._tg is not None:
             return
         self._tg = await anyio.create_task_group().__aenter__()
@@ -444,7 +441,7 @@ class ActorSystem:
         from .ref import ActorRef
 
         if self._closed or self._tg is None:
-            raise ActorStopped("ActorSystem is not running.")
+            raise ActorStopped("ActorSystem is not running.", reason="shutdown")
 
         if name is not None and name in self._registry:
             raise ValueError(f"Actor name '{name}' already exists.")
@@ -530,14 +527,14 @@ class ActorSystem:
             address = ActorAddress.parse(address)
 
         if address.system != self.system_id:
-            raise ActorStopped("Remote actor systems are not supported yet.")
+            raise ActorStopped("Remote actor systems are not supported yet.", reason="shutdown")
 
         rt = self._by_id.get(address.actor_id)
         if rt is None:
-            raise ActorStopped("Actor does not exist.")
+            raise ActorStopped("Actor does not exist.", reason="shutdown")
 
         if (not rt.alive) or rt.stopping:
-            raise ActorStopped("Actor is not running.")
+            raise ActorStopped("Actor is not running.", reason="shutdown")
 
         return ActorRef(
             _rid=rt.rid,
@@ -577,11 +574,11 @@ class ActorSystem:
 
         address = self._registry.get(name)
         if address is None:
-            raise ActorStopped(f"Actor with name '{name}' does not exist.")
+            raise ActorStopped(f"Actor with name '{name}' does not exist.", reason="shutdown")
 
         rt = self._by_id.get(address.actor_id)
         if rt is None:
-            raise ActorStopped(f"Actor with name '{name}' does not exist.")
+            raise ActorStopped(f"Actor with name '{name}' does not exist.", reason="shutdown")
 
         return ActorRef(
             _rid=rt.rid,
@@ -693,7 +690,7 @@ class ActorSystem:
         rid = self._coerce_rid(target)
         rt = self._by_id.get(rid)
         if rt is None:
-            raise ActorStopped("Actor does not exist.")
+            raise ActorStopped("Actor does not exist.", reason="shutdown")
 
         parent_rid = rt.parent.rid if rt.parent is not None else None
         children_rids = tuple(child.rid for child in rt.children)
@@ -1016,7 +1013,7 @@ class ActorSystem:
                 rt.alive = False
                 return
 
-            self._emit(ActorStarted(address=rt.address))
+            self._emit(ActorStarted(address=_serialize_address(rt.address)))
 
             while not self._closed and rt.alive:
                 try:
@@ -1046,6 +1043,9 @@ class ActorSystem:
                     break
 
         finally:
+            if rt.restarting:
+                return  # noqa
+
             # Mark actor as dead for this run-loop
             rt.alive = False
 
@@ -1080,7 +1080,7 @@ class ActorSystem:
 
             self._emit(
                 ActorStoppedEvent(
-                    address=rt.address,
+                    address=_serialize_address(rt.address),
                     reason="stopped",
                 )
             )
@@ -1161,8 +1161,9 @@ class ActorSystem:
 
         self._emit(
             ActorCrashed(
-                address=rt.address,
+                address=_serialize_address(rt.address),
                 error=exc,
+                reason=f"{type(exc).__name__}: {exc}",
             )
         )
 
@@ -1193,18 +1194,28 @@ class ActorSystem:
         strategy = rt.policy.strategy
 
         if strategy is Strategy.ESCALATE:
+            for child in list(rt.children):
+                await self._stop_runtime(child)
+
             if rt.parent is None:
-                rt.alive = False
+                await self._stop_runtime(rt)
                 return
+
             await self._handle_failure(rt.parent, exc)
-            rt.alive = False
+            await self._stop_runtime(rt)
             return
 
         if strategy is Strategy.STOP:
+            for child in list(rt.children):
+                await self._stop_runtime(child)
+
             await self._stop_runtime(rt)
             return
 
         if strategy is Strategy.RESTART:
+            for child in list(rt.children):
+                await self._stop_runtime(child)
+
             await self._restart_actor(rt)
             return
 
@@ -1273,13 +1284,6 @@ class ActorSystem:
 
         rt.restarting = True
 
-        self._emit(
-            ActorRestarted(
-                address=rt.address,
-                reason=RuntimeError("actor restarted"),
-            )
-        )
-
         can_restart = await self._check_restart_limits(rt)
         if not can_restart:
             rt.alive = False
@@ -1310,8 +1314,18 @@ class ActorSystem:
         self._inject_context(rt, self_ref=self_ref)
 
         started = await self._safe_on_start(rt)
+
         if not started:
             rt.alive = False
+            rt.restarting = False
+            return
+
+        self._emit(
+            ActorRestarted(
+                address=_serialize_address(rt.address),
+                reason="actor restarted",
+            )
+        )
         rt.restarting = False
 
     async def _check_restart_limits(self, rt: _ActorRuntime) -> bool:
