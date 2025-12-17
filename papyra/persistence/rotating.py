@@ -11,7 +11,15 @@ import anyio.abc
 from ._retention import apply_retention
 from ._utils import _json_default, _pick_dataclass_fields
 from .base import PersistenceBackend
-from .models import CompactionReport, PersistedAudit, PersistedDeadLetter, PersistedEvent
+from .models import (
+    CompactionReport,
+    PersistedAudit,
+    PersistedDeadLetter,
+    PersistedEvent,
+    PersistenceAnomaly,
+    PersistenceAnomalyType,
+    PersistenceScanReport,
+)
 from .retention import RetentionPolicy
 
 
@@ -577,4 +585,73 @@ class RotatingFilePersistence(PersistenceBackend):
             after_records=after_records,
             before_bytes=before_bytes,
             after_bytes=after_bytes,
+        )
+
+    async def scan(self) -> PersistenceScanReport:
+        """
+        Scan rotated log files for structural anomalies.
+
+        Detects:
+        - orphaned rotated files
+        - truncated or corrupted lines
+        """
+        anomalies: list[PersistenceAnomaly] = []
+
+        expected = {
+            str(self._path),
+            *(str(self._rotated_path(i)) for i in range(1, self._max_files)),
+        }
+
+        existing = {str(p) for p in self._path.parent.glob(self._path.name + "*")}
+
+        # Orphaned / unexpected files
+        for p in existing - expected:
+            anomalies.append(
+                PersistenceAnomaly(
+                    type=PersistenceAnomalyType.ORPHANED_ROTATED_FILE,
+                    path=p,
+                    detail="Unexpected file in rotation set",
+                )
+            )
+
+        # Scan contents
+        for p in self._iter_read_paths_oldest_first():  # type: ignore
+            if not p.exists():  # type: ignore
+                continue
+
+            try:
+                async with await anyio.open_file(p, "r", encoding="utf-8") as file:
+                    async for idx, line in enumerate(file):  # type: ignore
+                        if not line.endswith("\n"):
+                            anomalies.append(
+                                PersistenceAnomaly(
+                                    type=PersistenceAnomalyType.TRUNCATED_LINE,
+                                    path=str(p),
+                                    detail=f"Line {idx + 1} missing newline",
+                                )
+                            )
+                            break
+
+                        try:
+                            json.loads(line)
+                        except Exception:
+                            anomalies.append(
+                                PersistenceAnomaly(
+                                    type=PersistenceAnomalyType.CORRUPTED_LINE,
+                                    path=str(p),
+                                    detail=f"Invalid JSON at line {idx + 1}",
+                                )
+                            )
+            except OSError:
+                anomalies.append(
+                    PersistenceAnomaly(
+                        type=PersistenceAnomalyType.PARTIAL_WRITE,
+                        path=str(p),
+                        detail="File could not be read fully",
+                    )
+                )
+
+        return PersistenceScanReport(
+            backend="rotating",
+            anomalies=tuple(anomalies),
         )

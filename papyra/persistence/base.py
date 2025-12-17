@@ -5,6 +5,7 @@ from typing import Any
 from papyra._envelope import DeadLetter
 from papyra.audit import AuditReport
 from papyra.events import ActorEvent
+from papyra.persistence.models import PersistenceScanReport
 from papyra.persistence.retention import RetentionPolicy
 
 
@@ -115,6 +116,20 @@ class PersistenceBackend:
         Any
             Optional backend-specific compaction report/metadata (e.g. before/after counts/bytes).
             Backends may return `None` if no report is produced.
+        """
+        return None
+
+    async def scan(self) -> PersistenceScanReport | None:
+        """
+        Scan the persistence backend for corruption or structural anomalies.
+
+        This method MUST NOT mutate storage.
+        It is intended to run at startup before actors begin processing.
+
+        Returns
+        -------
+        PersistenceScanReport | None
+            A scan report describing detected anomalies, or None if unsupported.
         """
         return None
 

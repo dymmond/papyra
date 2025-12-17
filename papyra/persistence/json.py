@@ -14,7 +14,15 @@ from papyra.persistence.retention import RetentionPolicy
 from ._retention import apply_retention
 from ._utils import _json_default, _pick_dataclass_fields
 from .base import PersistenceBackend
-from .models import CompactionReport, PersistedAudit, PersistedDeadLetter, PersistedEvent
+from .models import (
+    CompactionReport,
+    PersistedAudit,
+    PersistedDeadLetter,
+    PersistedEvent,
+    PersistenceAnomaly,
+    PersistenceAnomalyType,
+    PersistenceScanReport,
+)
 
 T = TypeVar("T")
 
@@ -408,4 +416,44 @@ class JsonFilePersistence(PersistenceBackend):
             after_records=after_records,
             before_bytes=before_bytes,
             after_bytes=after_bytes,
+        )
+
+    async def scan(self) -> PersistenceScanReport:
+        """
+        Scan the JSON log file for structural anomalies.
+
+        Detects:
+        - truncated / corrupted JSON lines
+        """
+        anomalies: list[PersistenceAnomaly] = []
+
+        if not self._path.exists():
+            return PersistenceScanReport(backend="json", anomalies=())
+
+        async with await anyio.open_file(self._path, mode="r", encoding="utf-8") as file:
+            async for idx, line in enumerate(file):  # type: ignore
+                if not line.endswith("\n"):
+                    anomalies.append(
+                        PersistenceAnomaly(
+                            type=PersistenceAnomalyType.TRUNCATED_LINE,
+                            path=str(self._path),
+                            detail=f"Line {idx + 1} missing newline",
+                        )
+                    )
+                    break
+
+                try:
+                    json.loads(line)
+                except Exception:
+                    anomalies.append(
+                        PersistenceAnomaly(
+                            type=PersistenceAnomalyType.CORRUPTED_LINE,
+                            path=str(self._path),
+                            detail=f"Invalid JSON at line {idx + 1}",
+                        )
+                    )
+
+        return PersistenceScanReport(
+            backend="json",
+            anomalies=tuple(anomalies),
         )

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from enum import Enum, auto
 from typing import Any
 
 from papyra.address import ActorAddress
@@ -150,3 +151,45 @@ class CompactionReport:
         if self.before_bytes is None or self.after_bytes is None:
             return None
         return self.before_bytes - self.after_bytes
+
+
+class PersistenceAnomalyType(Enum):
+    """
+    Classification of persistence-level anomalies detected during startup scans.
+    """
+
+    TRUNCATED_LINE = auto()
+    PARTIAL_WRITE = auto()
+    CORRUPTED_LINE = auto()
+    ORPHANED_ROTATED_FILE = auto()
+    UNEXPECTED_FILE = auto()
+
+
+@dataclass(frozen=True)
+class PersistenceAnomaly:
+    """
+    Represents a detected persistence anomaly.
+
+    This object is purely observational in Step 1.
+    No repair or mutation is performed at this stage.
+    """
+
+    type: PersistenceAnomalyType
+    path: str
+    detail: str | None = None
+
+
+@dataclass(frozen=True)
+class PersistenceScanReport:
+    """
+    Result of a startup persistence scan.
+
+    The scan reports all detected anomalies without modifying storage.
+    """
+
+    backend: str
+    anomalies: tuple[PersistenceAnomaly, ...]
+
+    @property
+    def has_anomalies(self) -> bool:
+        return bool(self.anomalies)

@@ -6,7 +6,7 @@ from typing import Any
 import anyio
 import anyio.abc
 
-from .models import PersistedAudit, PersistedDeadLetter, PersistedEvent
+from .models import PersistedAudit, PersistedDeadLetter, PersistedEvent, PersistenceScanReport
 
 
 @dataclass(slots=True)
@@ -262,3 +262,12 @@ class InMemoryPersistence:
                 "before_bytes": None,
                 "after_bytes": None,
             }
+
+    async def scan(self) -> PersistenceScanReport:
+        """
+        In-memory persistence has no startup anomalies.
+        """
+        return PersistenceScanReport(
+            backend="memory",
+            anomalies=(),
+        )
