@@ -94,7 +94,12 @@ class InMemoryPersistence:
                 return
             self._dead_letters.append(dead_letter)
 
-    async def list_events(self) -> tuple[PersistedEvent, ...]:
+    async def list_events(
+        self,
+        *,
+        limit: int | None = None,
+        since: float | None = None,
+    ) -> tuple[PersistedEvent, ...]:
         """
         Retrieve a snapshot of all stored lifecycle events.
 
@@ -105,9 +110,22 @@ class InMemoryPersistence:
             to prevent external modification of the internal list.
         """
         async with self._lock:
-            return tuple(self._events)
+            events = self._events
 
-    async def list_audits(self) -> tuple[PersistedAudit, ...]:
+            if since is not None:
+                events = [e for e in events if e.timestamp >= since]
+
+            if limit is not None:
+                events = events[-limit:]
+
+            return tuple(events)
+
+    async def list_audits(
+        self,
+        *,
+        limit: int | None = None,
+        since: float | None = None,
+    ) -> tuple[PersistedAudit, ...]:
         """
         Retrieve a snapshot of all stored audit reports.
 
@@ -117,9 +135,22 @@ class InMemoryPersistence:
             A tuple containing the audit records.
         """
         async with self._lock:
-            return tuple(self._audits)
+            audits = self._audits
 
-    async def list_dead_letters(self) -> tuple[PersistedDeadLetter, ...]:
+            if since is not None:
+                audits = [audit for audit in audits if audit.timestamp >= since]
+
+            if limit is not None:
+                audits = audits[-limit:]
+
+            return tuple(audits)
+
+    async def list_dead_letters(
+        self,
+        *,
+        limit: int | None = None,
+        since: float | None = None,
+    ) -> tuple[PersistedDeadLetter, ...]:
         """
         Retrieve a snapshot of all stored dead letters.
 
@@ -129,7 +160,15 @@ class InMemoryPersistence:
             A tuple containing the dead letter records.
         """
         async with self._lock:
-            return tuple(self._dead_letters)
+            dead_letters = self._dead_letters
+
+            if since is not None:
+                dead_letters = [dl for dl in dead_letters if dl.timestamp >= since]
+
+            if limit is not None:
+                dead_letters = dead_letters[-limit:]
+
+            return tuple(dead_letters)
 
     async def clear(self) -> None:
         """

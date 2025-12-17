@@ -38,7 +38,7 @@ classifiers = [
     "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
     "Topic :: Internet :: WWW/HTTP",
 ]
-dependencies = ["anyio>=4.12.0", "monkay>=0.5.1"]
+dependencies = ["anyio>=4.12.0", "sayer>=0.7.5"]
 keywords = ["papyra"]
 
 [project.urls]
@@ -47,7 +47,6 @@ Documentation = "https://papyra.tarsild.io"
 Changelog = "https://papyra.tarsild.io/release-notes/"
 Funding = "https://github.com/sponsors/tarsil"
 Source = "https://github.com/tarsil/papyra"
-
 
 [tool.hatch.version]
 path = "papyra/__init__.py"
@@ -72,6 +71,9 @@ testing = [
     "pytest-cov>=4.0.0,<5.0.0",
     "ipdb",
 ]
+
+[project.scripts]
+papyra = "papyra.cli.app:app"
 
 [tool.hatch.envs.default.scripts]
 clean_pyc = "find . -type f -name \"*.pyc\" -delete"

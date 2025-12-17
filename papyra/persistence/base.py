@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import Any
 
 from papyra._envelope import DeadLetter
 from papyra.audit import AuditReport
 from papyra.events import ActorEvent
+from papyra.persistence.retention import RetentionPolicy
 
 
-@runtime_checkable
-class PersistenceBackend(Protocol):
+class PersistenceBackend:
     """
     Defines the interface for pluggable persistence and observability backends.
 
@@ -27,7 +27,25 @@ class PersistenceBackend(Protocol):
     the persistence of mailboxes.
     """
 
-    def record_event(self, event: ActorEvent) -> None:
+    def __init__(self, *, retention_policy: RetentionPolicy | None = None) -> None:
+        self._retention = retention_policy or RetentionPolicy()
+
+    @property
+    def retention(self) -> RetentionPolicy | None:
+        """
+        Retrieve the currently configured retention policy.
+
+        This property provides access to the rules governing data lifecycle management,
+        specifying constraints such as the maximum number of records, data age, or
+        storage size limits.
+
+        Returns:
+            RetentionPolicy | None: The retention policy instance if configured,
+                otherwise None.
+        """
+        return self._retention
+
+    async def record_event(self, event: ActorEvent | Any) -> None:
         """
         Persist a specific lifecycle event emitted by the actor system.
 
@@ -43,7 +61,7 @@ class PersistenceBackend(Protocol):
         """
         ...
 
-    def record_audit(self, report: AuditReport) -> None:
+    async def record_audit(self, report: AuditReport | Any) -> None:
         """
         Persist a comprehensive system audit report.
 
@@ -59,7 +77,7 @@ class PersistenceBackend(Protocol):
         """
         ...
 
-    def record_dead_letter(self, dead_letter: DeadLetter) -> None:
+    async def record_dead_letter(self, dead_letter: DeadLetter | Any) -> None:
         """
         Persist a record of an undeliverable message.
 
