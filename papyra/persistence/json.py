@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, TypeVar
@@ -10,10 +11,10 @@ import anyio.abc
 
 from papyra.persistence.retention import RetentionPolicy
 
-from ._rentention import apply_retention
+from ._retention import apply_retention
 from ._utils import _json_default, _pick_dataclass_fields
 from .base import PersistenceBackend
-from .models import PersistedAudit, PersistedDeadLetter, PersistedEvent
+from .models import CompactionReport, PersistedAudit, PersistedDeadLetter, PersistedEvent
 
 T = TypeVar("T")
 
@@ -355,3 +356,56 @@ class JsonFilePersistence(PersistenceBackend):
         Check if the backend is closed.
         """
         return self._closed
+
+    async def compact(self) -> CompactionReport:
+        """
+        Physically compact the NDJSON file by rewriting it while applying retention.
+
+        This operation is explicit, destructive, and atomic:
+        - Corrupted lines are discarded
+        - Retention is enforced physically
+        - The original file is replaced via os.replace()
+        """
+        async with self._lock:
+            before_bytes = self._path.stat().st_size if self._path.exists() else 0
+
+            rows: list[dict[str, Any]] = []
+
+            if self._path.exists():
+                async with await anyio.open_file(self._path, mode="r", encoding="utf-8") as f:
+                    async for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            obj = json.loads(line)
+                        except Exception:
+                            continue
+                        if isinstance(obj, dict):
+                            rows.append(obj)
+
+            before_records = len(rows)
+
+            if self.retention is not None:
+                rows = apply_retention(rows, self.retention)
+
+            after_records = len(rows)
+
+            tmp_path = self._path.with_suffix(self._path.suffix + ".compact.tmp")
+
+            async with await anyio.open_file(tmp_path, mode="w", encoding="utf-8") as f:
+                for row in rows:
+                    await f.write(json.dumps(row, ensure_ascii=False, default=_json_default) + "\n")
+                await f.flush()
+
+            os.replace(tmp_path, self._path)
+
+            after_bytes = self._path.stat().st_size if self._path.exists() else 0
+
+        return CompactionReport(
+            backend="json",
+            before_records=before_records,
+            after_records=after_records,
+            before_bytes=before_bytes,
+            after_bytes=after_bytes,
+        )

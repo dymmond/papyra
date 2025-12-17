@@ -8,10 +8,10 @@ from typing import Any
 import anyio
 import anyio.abc
 
-from ._rentention import apply_retention
+from ._retention import apply_retention
 from ._utils import _json_default, _pick_dataclass_fields
 from .base import PersistenceBackend
-from .models import PersistedAudit, PersistedDeadLetter, PersistedEvent
+from .models import CompactionReport, PersistedAudit, PersistedDeadLetter, PersistedEvent
 from .retention import RetentionPolicy
 
 
@@ -470,3 +470,111 @@ class RotatingFilePersistence(PersistenceBackend):
         """
         async with self._lock:
             self._closed = True
+
+    async def compact(self) -> CompactionReport:
+        """
+        Physically compact all rotated log files by rewriting them while applying retention.
+
+        This operation:
+        - Reads all existing log files (oldest -> newest)
+        - Discards corrupted lines
+        - Applies retention once
+        - Rewrites records into a minimal set of files respecting max_bytes
+        - Atomically replaces old files
+        """
+        async with self._lock:
+            # Read all raw rows
+            rows: list[dict[str, Any]] = []
+            before_bytes = 0
+
+            for p in self._iter_read_paths_oldest_first():
+                if not p.exists():
+                    continue
+
+                try:
+                    before_bytes += p.stat().st_size
+                    async with await anyio.open_file(p, "r", encoding="utf-8") as f:
+                        async for line in f:
+                            line = line.strip()
+                            if not line:
+                                continue
+                            try:
+                                obj = json.loads(line)
+                            except Exception:
+                                continue
+                            if isinstance(obj, dict):
+                                rows.append(obj)
+                except OSError:
+                    # File may disappear during compaction preparation
+                    continue
+
+            before_records = len(rows)
+
+            # Apply retention
+            if self.retention is not None:
+                rows = apply_retention(rows, self.retention)
+
+            after_records = len(rows)
+
+            # Split rows into chunks respecting max_bytes
+            chunks: list[list[str]] = []
+            current_chunk: list[str] = []
+            current_size = 0
+
+            for row in rows:
+                line = json.dumps(row, default=_json_default) + "\n"
+                size = len(line.encode("utf-8"))
+
+                if current_chunk and current_size + size > self._max_bytes:
+                    chunks.append(current_chunk)
+                    current_chunk = []
+                    current_size = 0
+
+                current_chunk.append(line)
+                current_size += size
+
+            if current_chunk:
+                chunks.append(current_chunk)
+
+            # Enforce max_files limit (keep newest chunks)
+            if len(chunks) > self._max_files:
+                chunks = chunks[-self._max_files :]
+
+            # --- Write temp files ---
+            tmp_paths: list[Path] = []
+
+            for idx, chunk in enumerate(reversed(chunks)):
+                # idx == 0 → active file
+                if idx == 0:
+                    tmp = self._path.with_suffix(self._path.suffix + ".compact.tmp")
+                else:
+                    tmp = self._rotated_path(idx).with_suffix(self._rotated_path(idx).suffix + ".compact.tmp")
+
+                async with await anyio.open_file(tmp, "w", encoding="utf-8") as f:
+                    for line in chunk:
+                        await f.write(line)
+                    await f.flush()
+
+                tmp_paths.append(tmp)
+
+            # First remove old files
+            for p in self._iter_read_paths_oldest_first():
+                try:
+                    p.unlink()
+                except FileNotFoundError:
+                    pass
+
+            # Then move new compacted files into place
+            for tmp in tmp_paths:
+                final = Path(str(tmp).replace(".compact.tmp", ""))
+                os.replace(tmp, final)
+
+            after_bytes = sum(p.stat().st_size for p in self._iter_read_paths_oldest_first() if p.exists())
+
+        return CompactionReport(
+            backend="rotating",
+            before_records=before_records,
+            after_records=after_records,
+            before_bytes=before_bytes,
+            after_bytes=after_bytes,
+        )

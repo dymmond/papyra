@@ -115,3 +115,38 @@ class PersistedDeadLetter:
     message_type: str
     payload: Any
     timestamp: float
+
+
+@dataclass(frozen=True)
+class CompactionReport:
+    """
+    Result metadata produced by a physical compaction / vacuum operation.
+
+    This object is observational only. It must never influence runtime behavior,
+    but provides valuable insight for audits, CLI tooling, metrics, and debugging.
+
+    Fields are intentionally optional where a backend cannot reasonably compute
+    them (e.g. memory-only backends).
+    """
+
+    backend: str
+    before_records: int
+    after_records: int
+    before_bytes: int | None = None
+    after_bytes: int | None = None
+
+    @property
+    def removed_records(self) -> int:
+        """
+        Number of records physically removed by compaction.
+        """
+        return self.before_records - self.after_records
+
+    @property
+    def reclaimed_bytes(self) -> int | None:
+        """
+        Number of bytes reclaimed by compaction, if measurable.
+        """
+        if self.before_bytes is None or self.after_bytes is None:
+            return None
+        return self.before_bytes - self.after_bytes

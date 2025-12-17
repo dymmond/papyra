@@ -93,6 +93,31 @@ class PersistenceBackend:
         """
         ...
 
+    async def compact(self) -> Any:
+        """
+        Physically compact / vacuum the underlying storage by rewriting it while applying retention.
+
+        Retention in Papyra is typically enforced logically at read time. Compaction is the explicit,
+        destructive operation that makes retention *physical* by rewriting the stored records so that
+        old/expired records are removed from disk.
+
+        Contract
+        --------
+        - This operation MUST be explicit (never automatic).
+        - Implementations SHOULD be crash-safe and atomic (e.g. write-to-temp + `os.replace`).
+        - Implementations MUST apply the configured `RetentionPolicy` in the same way as reads.
+        - Memory-only backends MAY implement this as a no-op.
+        - This method MUST NOT raise in a way that can crash the actor system; callers may treat it
+          as best-effort.
+
+        Returns
+        -------
+        Any
+            Optional backend-specific compaction report/metadata (e.g. before/after counts/bytes).
+            Backends may return `None` if no report is produced.
+        """
+        return None
+
     async def aclose(self) -> None:
         """
         Asynchronously close the persistence backend connection.

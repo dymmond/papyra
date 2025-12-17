@@ -1472,6 +1472,25 @@ class ActorSystem:
         with contextlib.suppress(Exception):
             await self._persistence.aclose()
 
+    async def compact(self) -> Any:
+        """
+        Trigger a physical compaction / vacuum of the configured persistence backend.
+
+        This operation is best-effort and observational only:
+        - It must never crash the actor system
+        - It does not block actor execution
+        - It may be a no-op depending on the backend
+
+        Returns
+        -------
+        Any
+            Backend-specific compaction metadata (if any), or None.
+        """
+        try:
+            return await self._persistence.compact()
+        except Exception:
+            return None
+
     async def __aenter__(self) -> "ActorSystem":
         """
         Context manager entry point. Starts the system.
