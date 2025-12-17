@@ -117,3 +117,30 @@ async def dead_letters(
 
     for dl in dead_letters:
         info(f"[{dl.timestamp:.3f}] " f"target={dl.target} " f"type={dl.message_type} " f"payload={dl.payload!r}")
+
+
+@inspect.command()
+async def summary() -> None:
+    """
+    Display the most recent system health summary from the audit logs.
+
+    This command fetches the latest `PersistedAudit` record to provide a quick overview of the
+    actor system's status, including actor counts and dead letter statistics. It allows operators
+    to check system vitals without parsing the full event log.
+    """
+    audits = await monkay.settings.persistence.list_audits(limit=1)
+
+    if not audits:
+        info("No audit data available.")
+        return
+
+    # The backend returns a list, even if limit=1. Get the last (newest) one.
+    audit = audits[-1]
+
+    info(
+        f"Actors: total={audit.total_actors} "
+        f"alive={audit.alive_actors} "
+        f"stopping={audit.stopping_actors} "
+        f"restarting={audit.restarting_actors}"
+    )
+    info(f"Dead letters: {audit.dead_letters_count}")
