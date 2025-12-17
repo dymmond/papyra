@@ -424,10 +424,22 @@ class JsonFilePersistence(PersistenceBackend):
 
     async def scan(self) -> PersistenceScanReport:
         """
-        Scan the JSON log file for structural anomalies.
+        Scan the single JSON log file to detect structural and data anomalies.
 
-        Detects:
-        - truncated / corrupted JSON lines
+        This method inspects the file line by line to ensure strict adherence to the
+        NDJSON (Newline Delimited JSON) format. It identifies common issues that occur
+        due to application crashes or write interruptions.
+
+        The scan detects:
+        - **Truncated Lines**: Lines that do not end with a newline character, indicating
+          an incomplete write operation at the end of the file.
+        - **Corrupted Lines**: Lines that contain text that cannot be parsed as valid JSON.
+        - **Missing File**: If the file does not exist, it is reported as a clean state
+          with no anomalies.
+
+        Returns:
+            PersistenceScanReport: A report object containing a tuple of all detected
+                anomalies. If the file is healthy or missing, the anomalies tuple is empty.
         """
         anomalies: list[PersistenceAnomaly] = []
 
@@ -435,10 +447,12 @@ class JsonFilePersistence(PersistenceBackend):
             return PersistenceScanReport(backend="json", anomalies=())
 
         idx = 0
+        # Open the file for reading using anyio for async IO support
         async with await anyio.open_file(self._path, mode="r", encoding="utf-8") as file:
             async for line in file:
                 idx += 1
 
+                # Check for truncation: Every valid NDJSON line must end with a newline.
                 if not line.endswith("\n"):
                     anomalies.append(
                         PersistenceAnomaly(
@@ -447,8 +461,10 @@ class JsonFilePersistence(PersistenceBackend):
                             detail=f"Line {idx} missing newline",
                         )
                     )
+                    # A truncated line implies the end of the valid data stream
                     break
 
+                # Check for corruption: Verify the line parses into a valid JSON object
                 try:
                     json.loads(line)
                 except Exception:
@@ -467,23 +483,38 @@ class JsonFilePersistence(PersistenceBackend):
 
     async def recover(self, config: Any = None) -> PersistenceRecoveryReport | None:
         """
-        Recover the JSON log file according to the configured recovery mode.
+        Execute a recovery process for the single JSON log file.
 
-        Strategy (safe for append-only NDJSON):
-        - Keep only lines that are valid JSON dicts
-        - Stop at the first truncated line (missing newline) and drop the remainder
-        - Rewrite atomically (or quarantine+rewrite)
+        This method attempts to restore the file to a valid state based on the provided
+        configuration. It uses a "salvage" strategy suitable for append-only logs:
+        1. Read the file line by line.
+        2. Discard any lines that are invalid JSON.
+        3. Stop reading immediately if a truncated line (missing newline) is encountered.
+        4. Rewrite the file atomically with only the valid data.
+
+        Args:
+            config (Any, optional): A configuration object (PersistenceRecoveryConfig)
+                dictating the recovery mode (e.g., IGNORE, QUARANTINE). Defaults to None.
+
+        Returns:
+            PersistenceRecoveryReport | None: A report summarizing the actions taken,
+                including which files were repaired or quarantined. Returns None if the
+                scan fails.
         """
-
         cfg = config or PersistenceRecoveryConfig()
+
+        # Perform an initial scan to decide if recovery is needed
         scan = await self.scan()
         if scan is None:
             return None
 
+        # If configured to ignore issues or if the file is healthy, return immediately
         if cfg.mode is PersistenceRecoveryMode.IGNORE or not scan.has_anomalies:
             return PersistenceRecoveryReport(backend="json", scan=scan)
 
-        # Build repaired content (valid json lines only, stop on truncation)
+        # ---------------------------------------------------------
+        # Phase 1: Filter valid content from the damaged file
+        # ---------------------------------------------------------
         valid_lines: list[str] = []
 
         if not self._path.exists():
@@ -491,19 +522,24 @@ class JsonFilePersistence(PersistenceBackend):
 
         async with await anyio.open_file(self._path, mode="r", encoding="utf-8") as f:
             async for line in f:
+                # Stop processing at the first sign of truncation (incomplete write)
                 if not line.endswith("\n"):
                     break
                 try:
                     obj = json.loads(line)
                 except Exception:
+                    # Skip lines that are corrupted/invalid JSON
                     continue
+                # Re-serialize to ensure consistent formatting and append newline
                 if isinstance(obj, dict):
                     valid_lines.append(json.dumps(obj, ensure_ascii=False, default=_json_default) + "\n")
 
         repaired_files: list[str] = []
         quarantined_files: list[str] = []
 
-        # Quarantine original if requested
+        # ---------------------------------------------------------
+        # Phase 2: Quarantine the original file (if requested)
+        # ---------------------------------------------------------
         if cfg.mode is PersistenceRecoveryMode.QUARANTINE:
             qdir = Path(cfg.quarantine_dir) if cfg.quarantine_dir else self._path.parent
             qdir.mkdir(parents=True, exist_ok=True)
@@ -513,7 +549,10 @@ class JsonFilePersistence(PersistenceBackend):
             os.replace(self._path, qpath)
             quarantined_files.append(str(qpath))
 
-        # Write repaired file to temp then atomic replace into main path
+        # ---------------------------------------------------------
+        # Phase 3: Atomic rewrite of the file
+        # ---------------------------------------------------------
+        # Write valid data to a temporary file first to prevent data loss during write
         tmp = self._path.with_suffix(self._path.suffix + ".recovered.tmp")
 
         async with await anyio.open_file(tmp, mode="w", encoding="utf-8") as wf:
@@ -521,6 +560,7 @@ class JsonFilePersistence(PersistenceBackend):
                 await wf.write(line)
             await wf.flush()
 
+        # Atomically replace the main file with the recovered temporary file
         os.replace(tmp, self._path)
         repaired_files.append(str(self._path))
 

@@ -593,22 +593,38 @@ class RotatingFilePersistence(PersistenceBackend):
 
     async def scan(self) -> PersistenceScanReport:
         """
-        Scan rotated log files for structural anomalies.
+        Scan the storage directory to detect structural and data anomalies.
 
-        Detects:
-        - orphaned rotated files
-        - truncated or corrupted lines
+        This method performs a comprehensive health check on the persistence layer by
+        examining both the file system state and the content of individual log files.
+
+        The scan detects:
+        - **Orphaned Files**: Files in the directory that match the naming pattern
+          but do not fit within the configured `max_files` rotation limit.
+        - **Truncated Lines**: Lines that end abruptly without a newline character,
+          often caused by crashes during a write operation.
+        - **Corrupted Lines**: Lines that contain invalid JSON data.
+        - **Unreadable Files**: Files that exist but cannot be opened or read.
+
+        Returns:
+            PersistenceScanReport: A report object containing a tuple of all detected
+                anomalies. If no issues are found, the tuple is empty.
         """
         anomalies: list[PersistenceAnomaly] = []
 
+        # ---------------------------------------------------------
+        # Phase 1: Detect File System Anomalies (Orphans)
+        # ---------------------------------------------------------
+        # Calculate the set of file paths that are valid according to the rotation policy
         expected = {
             str(self._path),
             *(str(self._rotated_path(i)) for i in range(1, self._max_files)),
         }
 
+        # Find all files actually present on disk that match the base filename pattern
         existing = {str(p) for p in self._path.parent.glob(self._path.name + "*")}
 
-        # Orphaned / unexpected files
+        # Any existing file that is not in the expected set is considered orphaned
         for p in existing - expected:
             anomalies.append(
                 PersistenceAnomaly(
@@ -618,7 +634,10 @@ class RotatingFilePersistence(PersistenceBackend):
                 )
             )
 
-        # Scan contents
+        # ---------------------------------------------------------
+        # Phase 2: Detect Content Anomalies (Corruption/Truncation)
+        # ---------------------------------------------------------
+        # Iterate over all valid files, generally checking oldest first
         for p in self._iter_read_paths_oldest_first():  # type: ignore
             if not p.exists():  # type: ignore
                 continue
@@ -628,6 +647,7 @@ class RotatingFilePersistence(PersistenceBackend):
                     idx = 0
                     async for line in file:
                         idx += 1
+                        # Check for truncation: The last written line must have a newline
                         if not line.endswith("\n"):
                             anomalies.append(
                                 PersistenceAnomaly(
@@ -636,8 +656,10 @@ class RotatingFilePersistence(PersistenceBackend):
                                     detail=f"Line {idx} missing newline",
                                 )
                             )
+                            # A truncated line usually means the end of valid data
                             break
 
+                        # Check for corruption: Ensure the line is valid JSON
                         try:
                             json.loads(line)
                         except Exception:
@@ -649,6 +671,7 @@ class RotatingFilePersistence(PersistenceBackend):
                                 )
                             )
             except OSError:
+                # If the file exists but cannot be read, report it as a partial/failed write
                 anomalies.append(
                     PersistenceAnomaly(
                         type=PersistenceAnomalyType.PARTIAL_WRITE,
@@ -664,34 +687,66 @@ class RotatingFilePersistence(PersistenceBackend):
 
     async def recover(self, config: Any = None) -> PersistenceRecoveryReport | None:
         """
-        Recover the rotating log set according to the configured recovery mode.
+        Execute a recovery process for the rotating log files based on the specified configuration.
 
-        Strategy:
-        - Run scan() to detect orphan/unexpected files and corrupted/truncated lines.
-        - If QUARANTINE: move unexpected files aside.
-        - For each expected log file that exists: rewrite it keeping only valid JSON dict lines,
-          stopping at first truncated line.
+        This method is responsible for restoring the integrity of the persistence layer in the
+        event of corruption or filesystem anomalies. The recovery process involves several
+        distinct phases:
+
+        1.  **Scanning**: The current state of the log files is analyzed to detect anomalies
+            such as orphaned files, missing files, or corrupted data within the files.
+        2.  **Quarantine (Optional)**: If the recovery mode is set to QUARANTINE, unexpected
+            or corrupted files are moved to a separate directory for manual inspection,
+            preserving the original state before repair.
+        3.  **Repair**: The method iterates through all expected log files. It attempts to read
+            valid JSON records from them. If a file contains corrupted lines (non-JSON) or is
+            truncated (missing a newline at the end), those specific anomalies are discarded
+            or handled, and the file is rewritten with only the valid data.
+
+        Args:
+            config (Any, optional): A configuration object (PersistenceRecoveryConfig)
+                dictating the recovery mode (e.g., IGNORE, QUARANTINE) and parameters.
+                If None, a default configuration is instantiated.
+
+        Returns:
+            PersistenceRecoveryReport | None: A detailed report summarizing the scan results,
+                which files were repaired, and which were quarantined. Returns None if the
+                initial scan fails to initialize.
         """
+        # Initialize configuration; if None is provided, fall back to the default defaults
         cfg = config or PersistenceRecoveryConfig()
+
+        # Perform an initial scan to detect any file system or data anomalies
         scan = await self.scan()
         if scan is None:
             return None
 
+        # If the mode is set to IGNORE or if no anomalies were found, return the report
+        # immediately without modifying any files.
         if cfg.mode is PersistenceRecoveryMode.IGNORE or not scan.has_anomalies:
             return PersistenceRecoveryReport(backend="rotating", scan=scan)
 
         repaired_files: list[str] = []
         quarantined_files: list[str] = []
 
-        # Identify unexpected/orphaned files (same logic as scan)
+        # ---------------------------------------------------------
+        # Step 1: Identify unexpected or orphaned files
+        # ---------------------------------------------------------
+        # Define the set of filenames we strictly expect based on the rotation logic
         expected = {
             str(self._path),
             *(str(self._rotated_path(i)) for i in range(1, self._max_files)),
         }
+        # Find all files actually present on disk that match the log pattern
         existing = {str(p) for p in self._path.parent.glob(self._path.name + "*")}
+        # Determine the difference: files that exist but are not in the expected set
         unexpected = sorted(existing - expected)
 
+        # ---------------------------------------------------------
+        # Step 2: Quarantine unexpected files (if configured)
+        # ---------------------------------------------------------
         if cfg.mode is PersistenceRecoveryMode.QUARANTINE and unexpected:
+            # Determine the quarantine directory; default to the log's parent directory
             qdir = Path(cfg.quarantine_dir) if cfg.quarantine_dir else self._path.parent
             qdir.mkdir(parents=True, exist_ok=True)
             stamp = int(time.time() * 1000)
@@ -700,11 +755,15 @@ class RotatingFilePersistence(PersistenceBackend):
                 src = Path(p)
                 if not src.exists():
                     continue
+                # Move the unexpected file to the quarantine location with a timestamp suffix
                 qpath = qdir / f"{src.name}.quarantine.{stamp}"
                 os.replace(src, qpath)
                 quarantined_files.append(str(qpath))
 
-        # Rewrite expected files (only those that exist)
+        # ---------------------------------------------------------
+        # Step 3: Rewrite expected files to remove corruption
+        # ---------------------------------------------------------
+        # Iterate through expected files from oldest to newest to preserve logical order
         for p in self._iter_read_paths_oldest_first():  # type: ignore
             if not p.exists():  # type: ignore
                 continue
@@ -712,21 +771,28 @@ class RotatingFilePersistence(PersistenceBackend):
             valid_lines: list[str] = []
 
             try:
+                # Read the file line by line to filter valid JSON
                 async with await anyio.open_file(p, "r", encoding="utf-8") as rf:
                     async for line in rf:
+                        # If a line is missing the newline character at the end, it is
+                        # considered truncated (e.g., partial write during a crash).
+                        # We stop processing this file here.
                         if not line.endswith("\n"):
                             break
                         try:
                             obj = json.loads(line)
                         except Exception:
+                            # Skip lines that are not valid JSON (corruption in the middle)
                             continue
                         if isinstance(obj, dict):
+                            # Re-serialize to ensure clean formatting
                             valid_lines.append(json.dumps(obj, default=_json_default) + "\n")
             except OSError:
-                # If unreadable, treat as fully bad: keep it empty on rewrite
+                # If the file is completely unreadable, we treat it as fully bad.
+                # 'valid_lines' remains empty, effectively clearing the file on rewrite.
                 valid_lines = []
 
-            # Quarantine original expected file if requested
+            # If QUARANTINE mode is active, backup the original corrupted file before rewriting
             if cfg.mode is PersistenceRecoveryMode.QUARANTINE:
                 qdir = Path(cfg.quarantine_dir) if cfg.quarantine_dir else p.parent  # type: ignore
                 qdir.mkdir(parents=True, exist_ok=True)
@@ -735,12 +801,14 @@ class RotatingFilePersistence(PersistenceBackend):
                 os.replace(p, qpath)
                 quarantined_files.append(str(qpath))
 
+            # Write the valid lines to a temporary file first to ensure atomicity
             tmp = p.with_suffix(p.suffix + ".recovered.tmp")  # type: ignore
             async with await anyio.open_file(tmp, "w", encoding="utf-8") as wf:
                 for line in valid_lines:
                     await wf.write(line)
                 await wf.flush()
 
+            # Replace the original file with the repaired temporary file
             os.replace(tmp, p)
             repaired_files.append(str(p))
 
