@@ -1,0 +1,117 @@
+from __future__ import annotations
+
+from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import Any
+
+from papyra.address import ActorAddress
+
+
+@dataclass(frozen=True, slots=True)
+class PersistedEvent:
+    """
+    A serializable, storage-optimized representation of a lifecycle event within the actor system.
+
+    Unlike runtime `ActorEvent` objects, which are transient and meant for immediate handling,
+    this class is designed for long-term persistence (e.g., in a database or event log). It
+    captures the essential metadata ("facts") of an event in a format that remains stable even
+    if the internal runtime class definitions change.
+
+    Attributes
+    ----------
+    system_id : str
+        The unique identifier of the actor system where the event originated.
+    actor_address : ActorAddress
+        The logical address of the actor involved in the event.
+    event_type : str
+        The string name of the original event class (e.g., "ActorStarted", "ActorCrashed").
+        This allows for polymorphic reconstruction or query filtering without needing the
+        original class to be imported.
+    payload : Mapping[str, Any]
+        A dictionary containing relevant context specific to the event type (e.g., the
+        exception message for a crash or the reason for a stop).
+    timestamp : float
+        The Unix timestamp (seconds) indicating when the event occurred.
+    """
+
+    system_id: str
+    actor_address: ActorAddress
+    event_type: str
+    payload: Mapping[str, Any]
+    timestamp: float
+
+
+@dataclass(frozen=True, slots=True)
+class PersistedAudit:
+    """
+    A serializable snapshot of the system's health and operational metrics.
+
+    This class serves as a persistent record of an `AuditReport`. By storing sequences of these
+    records, operators can analyze trends over time, such as growing actor counts (potential
+    leaks) or spikes in dead letters.
+
+    Attributes
+    ----------
+    system_id : str
+        The unique identifier of the system being audited.
+    timestamp : float
+        The Unix timestamp (seconds) when the audit was performed.
+    total_actors : int
+        The total count of actors known to the system at the time of the audit.
+    alive_actors : int
+        The number of actors that were in the `alive` state.
+    stopping_actors : int
+        The number of actors that were in the process of shutting down.
+    restarting_actors : int
+        The number of actors that were undergoing a restart procedure.
+    registry_size : int
+        The total number of entries in the name registry.
+    registry_orphans : tuple[str, ...]
+        A list of registered names that did not point to a valid actor runtime.
+    registry_dead : tuple[str, ...]
+        A list of registered names pointing to actors that were not alive.
+    dead_letters_count : int
+        The cumulative count of dead letter messages observed by the system.
+    """
+
+    system_id: str
+    timestamp: float
+    total_actors: int
+    alive_actors: int
+    stopping_actors: int
+    restarting_actors: int
+    registry_size: int
+    registry_orphans: tuple[str, ...]
+    registry_dead: tuple[str, ...]
+    dead_letters_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class PersistedDeadLetter:
+    """
+    A serializable record of a message delivery failure.
+
+    This class captures the context of a `DeadLetter` event for offline analysis. It is
+    essential for debugging distributed systems, allowing developers to inspect what messages
+    failed, when they failed, and who the intended recipient was.
+
+    Attributes
+    ----------
+    system_id : str
+        The unique identifier of the system where the delivery failure occurred.
+    target : ActorAddress | None
+        The address of the intended recipient. May be None if the address could not be
+        resolved or parsed.
+    message_type : str
+        The string name of the message class/type (e.g., "PaymentRequest").
+    payload : Any
+        The actual content of the message that failed delivery.
+    timestamp : float
+        The Unix timestamp (seconds) when the message was routed to dead letters.
+    """
+
+    system_id: str
+    target: ActorAddress | None
+    message_type: str
+    payload: Any
+    timestamp: float

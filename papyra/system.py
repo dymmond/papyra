@@ -23,6 +23,13 @@ from .events import (
 from .exceptions import ActorStopped
 from .hooks import DefaultHooks, FailureInfo, SystemHooks
 from .mailbox import Mailbox
+from .persistence.base import PersistenceBackend
+from .persistence.memory import InMemoryPersistence
+from .persistence.models import (
+    PersistedAudit,
+    PersistedDeadLetter,
+    PersistedEvent,
+)
 from .supervision import Strategy, SupervisionPolicy
 from .supervisor import SupervisorDecision
 
@@ -190,6 +197,7 @@ class ActorSystem:
         on_dead_letter: Callable[[DeadLetter], None] | None = None,
         hooks: SystemHooks | None = None,
         time_fn: Callable[[], float] | None = None,
+        persistence: PersistenceBackend | None = None,
     ) -> None:
         """
         Initialize the ActorSystem.
@@ -223,6 +231,8 @@ class ActorSystem:
 
         self._time_fn: Callable[[], float] = time_fn or anyio.current_time
 
+        self._persistence: PersistenceBackend = persistence or InMemoryPersistence()  # type: ignore
+
     def events(self) -> tuple[ActorEvent, ...]:
         """
         Retrieve a chronological snapshot of all lifecycle events recorded by the system.
@@ -255,6 +265,26 @@ class ActorSystem:
         """
         self._events.append(event)
         self._dispatch_hook("on_event", event)
+
+        timestamp = self.now()
+
+        persisted = PersistedEvent(
+            system_id=self.system_id,
+            actor_address=event.address,
+            event_type=type(event).__name__,
+            payload={
+                name: getattr(event, name)
+                for name in dir(event)
+                if not name.startswith("_") and name not in ("address",) and not callable(getattr(event, name))
+            },
+            timestamp=timestamp,
+        )
+
+        try:
+            if self._tg is not None:
+                self._tg.start_soon(self._persistence.record_event, persisted)  # type: ignore
+        except Exception:
+            pass
 
         with contextlib.suppress(Exception):
             self._event_send.send_nowait(event)
@@ -737,6 +767,26 @@ class ActorSystem:
         )
 
         self._dispatch_hook("on_audit", report)
+
+        persisted = PersistedAudit(
+            system_id=self.system_id,
+            timestamp=self.now(),
+            total_actors=report.total_actors,
+            alive_actors=report.alive_actors,
+            stopping_actors=report.stopping_actors,
+            restarting_actors=report.restarting_actors,
+            registry_size=report.registry_size,
+            registry_orphans=report.registry_orphans,
+            registry_dead=report.registry_dead,
+            dead_letters_count=report.dead_letters_count,
+        )
+
+        try:
+            if self._tg is not None:
+                self._tg.start_soon(self._persistence.record_audit, persisted)  # type: ignore
+        except Exception:
+            pass
+
         return report
 
     def _on_dead_letter(self, dl: DeadLetter) -> None:
@@ -765,6 +815,20 @@ class ActorSystem:
 
         # 2. Broadcast the dead letter event to any registered system hooks.
         self._dispatch_hook("on_dead_letter", dl)
+
+        persisted = PersistedDeadLetter(
+            system_id=self.system_id,
+            target=dl.target,
+            message_type=type(dl.message).__name__,
+            payload=dl.message,
+            timestamp=self.now(),
+        )
+
+        try:
+            if self._tg is not None:
+                self._tg.start_soon(self._persistence.record_dead_letter, persisted)  # type: ignore
+        except Exception:
+            pass
 
     def _dispatch_hook(self, name: str, *args: Any) -> None:
         """
@@ -1390,6 +1454,9 @@ class ActorSystem:
 
             with contextlib.suppress(Exception):
                 await self._event_send.aclose()
+
+        with contextlib.suppress(Exception):
+            await self._persistence.aclose()
 
     async def __aenter__(self) -> "ActorSystem":
         """
