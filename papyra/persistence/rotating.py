@@ -8,9 +8,11 @@ from typing import Any
 import anyio
 import anyio.abc
 
+from ._rentention import apply_retention
 from ._utils import _json_default, _pick_dataclass_fields
 from .base import PersistenceBackend
 from .models import PersistedAudit, PersistedDeadLetter, PersistedEvent
+from .retention import RetentionPolicy
 
 
 class RotatingFilePersistence(PersistenceBackend):
@@ -57,6 +59,7 @@ class RotatingFilePersistence(PersistenceBackend):
         max_bytes: int = 50_000_000,
         max_files: int = 5,
         fsync: bool = False,
+        retention_policy: RetentionPolicy | None = None,
     ) -> None:
         """
         Initialize the RotatingFilePersistence backend.
@@ -73,6 +76,7 @@ class RotatingFilePersistence(PersistenceBackend):
         Raises:
             ValueError: If `max_bytes` or `max_files` are less than or equal to 0.
         """
+        super().__init__(retention_policy=retention_policy)
         self._path = Path(path)
         self._max_bytes = int(max_bytes)
         self._max_files = int(max_files)
@@ -271,6 +275,9 @@ class RotatingFilePersistence(PersistenceBackend):
                 # File might have been rotated/deleted during iteration by a writer
                 continue
 
+        if getattr(self, "_retention_policy", None) is not None:
+            results = apply_retention(results, self.retention)
+
         return results
 
     async def record_event(self, event: PersistedEvent) -> None:  # type: ignore
@@ -331,7 +338,7 @@ class RotatingFilePersistence(PersistenceBackend):
         Returns:
             tuple[PersistedEvent, ...]: A tuple of PersistedEvent objects.
         """
-        raw_records = await self._read_all()
+        raw_records = apply_retention(await self._read_all(), self.retention)
         events: list[PersistedEvent] = []
 
         for r in raw_records:
@@ -375,7 +382,7 @@ class RotatingFilePersistence(PersistenceBackend):
         Returns:
             tuple[PersistedAudit, ...]: A tuple of PersistedAudit objects.
         """
-        raw_records = await self._read_all()
+        raw_records = apply_retention(await self._read_all(), self.retention)
         audits: list[PersistedAudit] = []
 
         for r in raw_records:
@@ -416,7 +423,7 @@ class RotatingFilePersistence(PersistenceBackend):
         Returns:
             tuple[PersistedDeadLetter, ...]: A tuple of PersistedDeadLetter objects.
         """
-        raw_records = await self._read_all()
+        raw_records = apply_retention(await self._read_all(), self.retention)
         dls: list[PersistedDeadLetter] = []
 
         for r in raw_records:

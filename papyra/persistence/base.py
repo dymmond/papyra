@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from typing import Any, Protocol, runtime_checkable
+from typing import Any
 
 from papyra._envelope import DeadLetter
 from papyra.audit import AuditReport
 from papyra.events import ActorEvent
+from papyra.persistence.retention import RetentionPolicy
 
 
-@runtime_checkable
-class PersistenceBackend(Protocol):
+class PersistenceBackend:
     """
     Defines the interface for pluggable persistence and observability backends.
 
@@ -26,6 +26,24 @@ class PersistenceBackend(Protocol):
     This interface does **not** handle the serialization of actor internal state (variables) or
     the persistence of mailboxes.
     """
+
+    def __init__(self, *, retention_policy: RetentionPolicy | None = None) -> None:
+        self._retention = retention_policy or RetentionPolicy()
+
+    @property
+    def retention(self) -> RetentionPolicy | None:
+        """
+        Retrieve the currently configured retention policy.
+
+        This property provides access to the rules governing data lifecycle management,
+        specifying constraints such as the maximum number of records, data age, or
+        storage size limits.
+
+        Returns:
+            RetentionPolicy | None: The retention policy instance if configured,
+                otherwise None.
+        """
+        return self._retention
 
     async def record_event(self, event: ActorEvent | Any) -> None:
         """

@@ -8,6 +8,9 @@ from typing import Any, TypeVar
 import anyio
 import anyio.abc
 
+from papyra.persistence.retention import RetentionPolicy
+
+from ._rentention import apply_retention
 from ._utils import _json_default, _pick_dataclass_fields
 from .base import PersistenceBackend
 from .models import PersistedAudit, PersistedDeadLetter, PersistedEvent
@@ -44,7 +47,7 @@ class JsonFilePersistence(PersistenceBackend):
         Flag indicating if the backend has been shut down.
     """
 
-    def __init__(self, path: str | Path) -> None:
+    def __init__(self, path: str | Path, retention_policy: RetentionPolicy | None = None) -> None:
         """
         Initialize the file-based persistence backend.
 
@@ -54,6 +57,7 @@ class JsonFilePersistence(PersistenceBackend):
             The location where the log file should be created or opened. If the parent directory
             does not exist, it will be created automatically upon the first write.
         """
+        super().__init__(retention_policy=retention_policy)
         self._path = Path(path)
         self._lock: anyio.abc.Lock = anyio.Lock()
         self._closed: bool = False
@@ -165,6 +169,10 @@ class JsonFilePersistence(PersistenceBackend):
                     continue
                 if isinstance(obj, dict):
                     out.append(obj)
+
+            if self.retention is not None:
+                out = apply_retention(out, self.retention)
+
             return out
 
     async def list_events(
@@ -188,7 +196,7 @@ class JsonFilePersistence(PersistenceBackend):
         tuple[PersistedEvent, ...]
             A tuple of reconstructed `PersistedEvent` objects.
         """
-        rows = await self._read_all()
+        rows = apply_retention(await self._read_all(), self.retention)  # type: ignore
         items: list[PersistedEvent] = []
 
         for row in rows:
@@ -243,7 +251,7 @@ class JsonFilePersistence(PersistenceBackend):
         -------
         tuple[PersistedAudit, ...]
         """
-        rows = await self._read_all()
+        rows = apply_retention(await self._read_all(), self.retention)  # type: ignore
         items: list[PersistedAudit] = []
 
         for row in rows:
@@ -300,7 +308,7 @@ class JsonFilePersistence(PersistenceBackend):
         -------
         tuple[PersistedDeadLetter, ...]
         """
-        rows = await self._read_all()
+        rows = apply_retention(await self._read_all(), self.retention)  # type: ignore
         items: list[PersistedDeadLetter] = []
 
         for row in rows:
