@@ -821,11 +821,11 @@ class ActorSystem:
             timestamp=self.now(),
         )
 
-        try:
-            if self._tg is not None:
+        with contextlib.suppress(Exception):
+            if self._tg is not None and not self._closed:
                 self._tg.start_soon(self._persistence.record_dead_letter, persisted)  # type: ignore
-        except Exception:
-            pass
+            else:
+                anyio.lowlevel.spawn_system_task(self._persistence.record_dead_letter, persisted)  # type: ignore
 
     def _dispatch_hook(self, name: str, *args: Any) -> None:
         """

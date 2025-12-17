@@ -154,6 +154,46 @@ class InMemoryPersistence:
             self._closed = True
 
     @property
+    def events(self) -> tuple[PersistedEvent, ...]:
+        """
+        Retrieve a read-only snapshot of all recorded lifecycle events.
+
+        This property returns the internal list of events as a tuple to prevent external modification.
+        It is useful for assertions in tests or for inspecting the history of the system after a
+        workload has completed.
+
+        Returns
+        -------
+        tuple[PersistedEvent, ...]
+            A chronological sequence of persisted event records.
+        """
+        return tuple(self._events)
+
+    @property
+    def audits(self) -> tuple[PersistedAudit, ...]:
+        """
+        Retrieve a read-only snapshot of all recorded system audits.
+
+        Returns
+        -------
+        tuple[PersistedAudit, ...]
+            A chronological sequence of persisted audit reports.
+        """
+        return tuple(self._audits)
+
+    @property
+    def dead_letters(self) -> tuple[PersistedDeadLetter, ...]:
+        """
+        Retrieve a read-only snapshot of all recorded dead letters.
+
+        Returns
+        -------
+        tuple[PersistedDeadLetter, ...]
+            A chronological sequence of persisted dead letter records.
+        """
+        return tuple(self._dead_letters)
+
+    @property
     def closed(self) -> bool:
         """
         Check if the backend is currently closed.

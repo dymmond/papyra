@@ -87,6 +87,7 @@ class ActorRef:
         try:
             await self._mailbox_put(Envelope(message=message, reply=None))
         except Exception:
+            self._dead_letter_emit(message, expects_reply=False)
             raise ActorStopped("Actor is not running.") from None
 
     async def ask(self, message: Any, *, timeout: float | None = None) -> Any:
