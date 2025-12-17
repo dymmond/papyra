@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from papyra._envelope import DeadLetter
 from papyra.audit import AuditReport
@@ -27,7 +27,7 @@ class PersistenceBackend(Protocol):
     the persistence of mailboxes.
     """
 
-    def record_event(self, event: ActorEvent) -> None:
+    async def record_event(self, event: ActorEvent | Any) -> None:
         """
         Persist a specific lifecycle event emitted by the actor system.
 
@@ -43,7 +43,7 @@ class PersistenceBackend(Protocol):
         """
         ...
 
-    def record_audit(self, report: AuditReport) -> None:
+    async def record_audit(self, report: AuditReport | Any) -> None:
         """
         Persist a comprehensive system audit report.
 
@@ -59,7 +59,7 @@ class PersistenceBackend(Protocol):
         """
         ...
 
-    def record_dead_letter(self, dead_letter: DeadLetter) -> None:
+    async def record_dead_letter(self, dead_letter: DeadLetter | Any) -> None:
         """
         Persist a record of an undeliverable message.
 

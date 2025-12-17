@@ -279,7 +279,7 @@ class ActorSystem:
 
         try:
             if self._tg is not None:
-                self._tg.start_soon(self._persistence.record_event, persisted)  # type: ignore
+                self._tg.start_soon(self._persistence.record_event, persisted)
         except Exception:
             pass
 
@@ -780,7 +780,7 @@ class ActorSystem:
 
         try:
             if self._tg is not None:
-                self._tg.start_soon(self._persistence.record_audit, persisted)  # type: ignore
+                self._tg.start_soon(self._persistence.record_audit, persisted)
         except Exception:
             pass
 
@@ -823,7 +823,7 @@ class ActorSystem:
 
         with contextlib.suppress(Exception):
             if self._tg is not None and not self._closed:
-                self._tg.start_soon(self._persistence.record_dead_letter, persisted)  # type: ignore
+                self._tg.start_soon(self._persistence.record_dead_letter, persisted)
             else:
                 anyio.lowlevel.spawn_system_task(self._persistence.record_dead_letter, persisted)  # type: ignore
 
