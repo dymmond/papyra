@@ -52,6 +52,6 @@ class PersistenceStartupConfig:
             Defaults to None (no timeout).
     """
 
-    mode: PersistenceStartupMode = PersistenceStartupMode.IGNORE
+    mode: PersistenceStartupMode | str = PersistenceStartupMode.IGNORE
     recovery: PersistenceRecoveryConfig | None = None
     timeout_seconds: float | None = None
