@@ -172,8 +172,8 @@ async def startup_check(
         Option(help="Startup behavior"),
     ] = "fail_on_anomaly",
     recovery_mode: Annotated[
-        PersistenceRecoveryMode | None,
-        Option(help="Recovery mode if startup recovery is enabled"),
+        str | None,
+        Option(help="Recovery mode if startup recovery is enabled", required=False),
     ] = None,
 ) -> None:
     """
