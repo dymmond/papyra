@@ -6,7 +6,7 @@ from typing import Any, Awaitable, Protocol, runtime_checkable
 from ._envelope import DeadLetter
 from .address import ActorAddress
 from .events import ActorEvent
-from .persistence.models import PersistenceScanReport
+from .persistence.models import PersistenceRecoveryReport, PersistenceScanReport
 from .supervision import Strategy
 from .supervisor import SupervisorDecision
 
@@ -164,5 +164,33 @@ class DefaultHooks:
     def on_audit(self, report: object) -> None:
         """
         Ignore the audit report.
+        """
+        return None
+
+    async def on_persistence_scan(self, report: PersistenceScanReport) -> None:
+        """
+        Ignore the persistence scan.
+
+        Parameters
+        ----------
+        report
+
+        Returns
+        -------
+
+        """
+        return None
+
+    async def on_persistence_recovery(self, report: PersistenceRecoveryReport) -> None:
+        """
+        Ignore the persistence recovery.
+
+        Parameters
+        ----------
+        report
+
+        Returns
+        -------
+
         """
         return None
