@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from enum import Enum, auto
 from typing import Any
 
 from papyra.address import ActorAddress
@@ -115,3 +116,128 @@ class PersistedDeadLetter:
     message_type: str
     payload: Any
     timestamp: float
+
+
+@dataclass(frozen=True)
+class CompactionReport:
+    """
+    Result metadata produced by a physical compaction / vacuum operation.
+
+    This object is observational only. It must never influence runtime behavior,
+    but provides valuable insight for audits, CLI tooling, metrics, and debugging.
+
+    Fields are intentionally optional where a backend cannot reasonably compute
+    them (e.g. memory-only backends).
+    """
+
+    backend: str
+    before_records: int
+    after_records: int
+    before_bytes: int | None = None
+    after_bytes: int | None = None
+
+    @property
+    def removed_records(self) -> int:
+        """
+        Number of records physically removed by compaction.
+        """
+        return self.before_records - self.after_records
+
+    @property
+    def reclaimed_bytes(self) -> int | None:
+        """
+        Number of bytes reclaimed by compaction, if measurable.
+        """
+        if self.before_bytes is None or self.after_bytes is None:
+            return None
+        return self.before_bytes - self.after_bytes
+
+
+class PersistenceAnomalyType(Enum):
+    """
+    Classification of persistence-level anomalies detected during startup scans.
+    """
+
+    TRUNCATED_LINE = auto()
+    PARTIAL_WRITE = auto()
+    CORRUPTED_LINE = auto()
+    ORPHANED_ROTATED_FILE = auto()
+    UNEXPECTED_FILE = auto()
+
+
+@dataclass(frozen=True)
+class PersistenceAnomaly:
+    """
+    Represents a detected persistence anomaly.
+
+    This object is purely observational in Step 1.
+    No repair or mutation is performed at this stage.
+    """
+
+    type: PersistenceAnomalyType
+    path: str
+    detail: str | None = None
+
+
+@dataclass(frozen=True)
+class PersistenceScanReport:
+    """
+    Result of a startup persistence scan.
+
+    The scan reports all detected anomalies without modifying storage.
+    """
+
+    backend: str
+    anomalies: tuple[PersistenceAnomaly, ...]
+
+    @property
+    def has_anomalies(self) -> bool:
+        return bool(self.anomalies)
+
+
+class PersistenceRecoveryMode(Enum):
+    """
+    How startup recovery should behave when anomalies are detected.
+    """
+
+    IGNORE = "ignore"
+    REPAIR = "repair"
+    QUARANTINE = "quarantine"
+    REBUILD = "rebuild"
+
+
+@dataclass(frozen=True)
+class PersistenceRecoveryConfig:
+    """
+    Configuration for startup recovery.
+
+    mode:
+        IGNORE     -> only scan, never mutate
+        REPAIR     -> rewrite in place (atomic replace)
+        QUARANTINE -> move originals aside, then write repaired files
+    quarantine_dir:
+        Optional directory for quarantined files. If not provided, uses the same directory
+        as the target file.
+    """
+
+    mode: PersistenceRecoveryMode = PersistenceRecoveryMode.IGNORE
+    quarantine_dir: str | None = None
+
+
+@dataclass(frozen=True)
+class PersistenceRecoveryReport:
+    """
+    Result of a recovery run.
+
+    repaired_files:
+        Files that were rewritten/repaired.
+    quarantined_files:
+        Files that were moved aside (only in QUARANTINE mode).
+    scan:
+        The scan report that motivated recovery (always included).
+    """
+
+    backend: str
+    scan: PersistenceScanReport
+    repaired_files: tuple[str, ...] = ()
+    quarantined_files: tuple[str, ...] = ()

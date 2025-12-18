@@ -30,6 +30,7 @@ from .persistence.models import (
     PersistedAudit,
     PersistedDeadLetter,
     PersistedEvent,
+    PersistenceRecoveryConfig,
 )
 from .supervision import Strategy, SupervisionPolicy
 from .supervisor import SupervisorDecision
@@ -199,6 +200,7 @@ class ActorSystem:
         hooks: SystemHooks | None = None,
         time_fn: Callable[[], float] | None = None,
         persistence: PersistenceBackend | None = None,
+        persistence_recovery: PersistenceRecoveryConfig | None = None,
     ) -> None:
         """
         Initialize the ActorSystem.
@@ -216,23 +218,18 @@ class ActorSystem:
 
         self._tg: anyio.abc.TaskGroup | None = None
         self._closed = False
-
         self._actors: list[_ActorRuntime] = []
         self._by_id: dict[int, _ActorRuntime] = {}
         self._next_id: int = 1
         self._registry: dict[str, ActorAddress] = {}
-
         self._events: list[ActorEvent] = []
         self._event_send, self._event_recv = anyio.create_memory_object_stream(100)
-
         self.dead_letters = DeadLetterMailbox(on_dead_letter=self._on_dead_letter)
-
         self._hooks: SystemHooks = hooks or DefaultHooks()
         self._user_on_dead_letter = on_dead_letter
-
         self._time_fn: Callable[[], float] = time_fn or anyio.current_time
-
         self._persistence: PersistenceBackend = persistence or InMemoryPersistence()  # type: ignore
+        self._persistence_recovery = persistence_recovery
 
     def events(self) -> tuple[ActorEvent, ...]:
         """
@@ -395,6 +392,10 @@ class ActorSystem:
             raise ActorStopped("ActorSystem is closed.", reason="shutdown")
         if self._tg is not None:
             return
+
+        if self._persistence_recovery is not None:
+            with contextlib.suppress(Exception):
+                await self._persistence.recover(self._persistence_recovery)
         self._tg = await anyio.create_task_group().__aenter__()
 
     def spawn(
@@ -1471,6 +1472,25 @@ class ActorSystem:
 
         with contextlib.suppress(Exception):
             await self._persistence.aclose()
+
+    async def compact(self) -> Any:
+        """
+        Trigger a physical compaction / vacuum of the configured persistence backend.
+
+        This operation is best-effort and observational only:
+        - It must never crash the actor system
+        - It does not block actor execution
+        - It may be a no-op depending on the backend
+
+        Returns
+        -------
+        Any
+            Backend-specific compaction metadata (if any), or None.
+        """
+        try:
+            return await self._persistence.compact()
+        except Exception:
+            return None
 
     async def __aenter__(self) -> "ActorSystem":
         """

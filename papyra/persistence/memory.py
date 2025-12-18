@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 import anyio
 import anyio.abc
 
-from .models import PersistedAudit, PersistedDeadLetter, PersistedEvent
+from .models import (
+    PersistedAudit,
+    PersistedDeadLetter,
+    PersistedEvent,
+    PersistenceRecoveryReport,
+    PersistenceScanReport,
+)
 
 
 @dataclass(slots=True)
@@ -243,3 +250,34 @@ class InMemoryPersistence:
             True if `aclose()` has been called, False otherwise.
         """
         return self._closed
+
+    async def compact(self) -> dict[str, Any]:
+        """
+        No-op compaction for in-memory persistence.
+
+        In-memory persistence has no physical storage, so compaction does not
+        remove data or reclaim space. This method exists to satisfy the
+        persistence lifecycle contract and to allow uniform orchestration
+        across backends.
+        """
+        async with self._lock:
+            return {
+                "backend": "memory",
+                "before_records": (len(self._events) + len(self._audits) + len(self._dead_letters)),
+                "after_records": (len(self._events) + len(self._audits) + len(self._dead_letters)),
+                "before_bytes": None,
+                "after_bytes": None,
+            }
+
+    async def scan(self) -> PersistenceScanReport:
+        """
+        In-memory persistence has no startup anomalies.
+        """
+        return PersistenceScanReport(
+            backend="memory",
+            anomalies=(),
+        )
+
+    async def recover(self, config: Any = None) -> PersistenceRecoveryReport:
+        scan = PersistenceScanReport(backend="memory", anomalies=())
+        return PersistenceRecoveryReport(backend="memory", scan=scan)
