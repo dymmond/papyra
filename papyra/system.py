@@ -32,6 +32,7 @@ from .persistence.models import (
     PersistedEvent,
     PersistenceRecoveryConfig,
 )
+from .persistence.startup import PersistenceStartupConfig, PersistenceStartupMode
 from .supervision import Strategy, SupervisionPolicy
 from .supervisor import SupervisorDecision
 
@@ -201,6 +202,7 @@ class ActorSystem:
         time_fn: Callable[[], float] | None = None,
         persistence: PersistenceBackend | None = None,
         persistence_recovery: PersistenceRecoveryConfig | None = None,
+        persistence_startup: PersistenceStartupConfig | None = None,
     ) -> None:
         """
         Initialize the ActorSystem.
@@ -225,11 +227,12 @@ class ActorSystem:
         self._events: list[ActorEvent] = []
         self._event_send, self._event_recv = anyio.create_memory_object_stream(100)
         self.dead_letters = DeadLetterMailbox(on_dead_letter=self._on_dead_letter)
-        self._hooks: SystemHooks = hooks or DefaultHooks()
+        self._hooks: SystemHooks | DefaultHooks = hooks or DefaultHooks()
         self._user_on_dead_letter = on_dead_letter
         self._time_fn: Callable[[], float] = time_fn or anyio.current_time
         self._persistence: PersistenceBackend = persistence or InMemoryPersistence()  # type: ignore
         self._persistence_recovery = persistence_recovery
+        self._persistence_startup = persistence_startup
 
     def events(self) -> tuple[ActorEvent, ...]:
         """
@@ -377,25 +380,39 @@ class ActorSystem:
 
     async def start(self) -> None:
         """
-        Start the internal task group for the actor system.
+        Initialize and start the internal infrastructure for the actor system.
 
-        This method must be called (or the system must be used as an async context manager)
-        before any actors can be spawned. It initializes the `anyio.TaskGroup` that will
-        host all actor background tasks.
+        This method is the entry point for activating the system. It performs essential
+        pre-flight checks, runs the persistence startup sequence (scanning and recovery),
+        and initializes the `anyio.TaskGroup` that serves as the root supervisor for all
+        actor background tasks.
 
-        Raises
-        ------
-        ActorStopped
-            If the system has already been closed.
+        Idempotency:
+            If the system is already running (i.e., the task group is initialized),
+            this method returns immediately without effect.
+
+        Prerequisites:
+            The system must not be in a closed state. If `close()` has previously been
+            called, this method will raise an exception.
+
+        Raises:
+            ActorStopped: If the system has already been permanently closed.
         """
+        # Ensure the system is not in a terminal state before attempting to start.
         if self._closed:
             raise ActorStopped("ActorSystem is closed.", reason="shutdown")
+
+        # Idempotency check: If the task group exists, the system is already running.
         if self._tg is not None:
             return
 
-        if self._persistence_recovery is not None:
-            with contextlib.suppress(Exception):
-                await self._persistence.recover(self._persistence_recovery)
+        # Execute the persistence layer's health check and recovery process.
+        # This MUST complete successfully before any tasks are spawned to ensure
+        # data integrity.
+        await self._run_persistence_startup()
+
+        # Initialize the root task group. We manually enter the context manager here
+        # to keep the group open for the lifetime of the ActorSystem object.
         self._tg = await anyio.create_task_group().__aenter__()
 
     def spawn(
@@ -786,6 +803,81 @@ class ActorSystem:
             pass
 
         return report
+
+    async def _run_persistence_startup(self) -> None:
+        """
+        Execute the persistence startup sequence, including scanning and optional recovery.
+
+        This method must be invoked strictly before the main system task group is initialized
+        to ensure that the application starts with a valid and consistent data state.
+
+        The process follows these stages:
+        1.  **Scan**: The persistence layer is analyzed for corruption or structural issues.
+        2.  **Hook**: The `on_persistence_scan` hook is triggered with the results.
+        3.  **Reaction**: Depending on the configured `PersistenceStartupMode`:
+            -   `IGNORE` / `SCAN_ONLY`: No further action is taken.
+            -   `FAIL_ON_ANOMALY`: The startup is aborted if issues are found.
+            -   `RECOVER`: An automatic repair process is initiated.
+        4.  **Verification**: If recovery was attempted, a second scan ensures the fix
+            was successful. If anomalies persist, the startup is aborted.
+
+        Raises:
+            RuntimeError: If `FAIL_ON_ANOMALY` is set and issues are found, or if
+                `RECOVER` fails to resolve all detected anomalies.
+        """
+        if self._persistence is None:
+            return
+
+        cfg = self._persistence_startup
+        if cfg is None:
+            return
+
+        # -------------------------
+        # STEP 1: SCAN
+        # -------------------------
+        # Perform the initial health check of the persistence layer.
+        scan = await self._persistence.scan()
+
+        # Notify hooks about the scan result (e.g., for logging or monitoring).
+        if scan is not None:
+            self._dispatch_hook("on_persistence_scan", scan)
+
+        # If the backend is healthy or the scan capability is missing, we are done.
+        if scan is None or not scan.has_anomalies:
+            return
+
+        # -------------------------
+        # STEP 2: REACT
+        # -------------------------
+        # Determine the action based on the configured startup mode.
+        mode = cfg.mode
+
+        if mode == PersistenceStartupMode.IGNORE:
+            return
+
+        if mode == PersistenceStartupMode.SCAN_ONLY:
+            return
+
+        if mode == PersistenceStartupMode.FAIL_ON_ANOMALY:
+            raise RuntimeError(f"Persistence anomalies detected at startup: {scan.anomalies}")
+
+        if mode == PersistenceStartupMode.RECOVER:
+            # Attempt to repair the anomalies using the configured recovery strategy.
+            report = await self._persistence.recover(cfg.recovery)
+            if report is not None:
+                self._dispatch_hook("on_persistence_recovery", report)
+
+            # -------------------------
+            # STEP 3: POST-SCAN GUARANTEE
+            # -------------------------
+            # Validate that the recovery was actually successful.
+            post = await self._persistence.scan()
+            if post is not None:
+                self._dispatch_hook("on_persistence_scan", post)
+
+            # If anomalies still exist after recovery, we must abort to prevent data loss.
+            if post is not None and post.has_anomalies:
+                raise RuntimeError("Persistence recovery completed but anomalies still exist")
 
     def _on_dead_letter(self, dl: DeadLetter) -> None:
         """

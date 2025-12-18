@@ -126,6 +126,13 @@ class PersistenceBackend:
         This method MUST NOT mutate storage.
         It is intended to run at startup before actors begin processing.
 
+        Startup semantics
+        -----------------
+        - MUST be safe to call before any actors are started
+        - MUST NOT mutate storage
+        - MUST NOT emit events or audits
+        - MAY return None if unsupported
+
         Returns
         -------
         PersistenceScanReport | None
@@ -139,6 +146,13 @@ class PersistenceBackend:
 
         This method MAY mutate storage depending on config.mode.
         Default implementation does nothing.
+
+        Startup semantics
+        -----------------
+        - MAY mutate storage
+        - MUST be safe to call before ActorSystem task group exists
+        - MUST NOT emit events or audits
+        - MUST be idempotent for the same input state
 
         Returns
         -------
