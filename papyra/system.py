@@ -225,7 +225,7 @@ class ActorSystem:
         self._events: list[ActorEvent] = []
         self._event_send, self._event_recv = anyio.create_memory_object_stream(100)
         self.dead_letters = DeadLetterMailbox(on_dead_letter=self._on_dead_letter)
-        self._hooks: SystemHooks = hooks or DefaultHooks()
+        self._hooks: SystemHooks | DefaultHooks = hooks or DefaultHooks()
         self._user_on_dead_letter = on_dead_letter
         self._time_fn: Callable[[], float] = time_fn or anyio.current_time
         self._persistence: PersistenceBackend = persistence or InMemoryPersistence()  # type: ignore
