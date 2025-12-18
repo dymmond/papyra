@@ -1,6 +1,12 @@
-from __future__ import annotations
-
 import json
+import sys
+
+import pytest
+
+pytestmark = pytest.mark.skipif(
+    sys.version_info < (3, 11),
+    reason="Requires Python 3.11+",
+)
 
 
 def test_persistence_scan_clean(cli, tmp_path):
