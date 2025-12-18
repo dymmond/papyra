@@ -203,6 +203,7 @@ class PersistenceRecoveryMode(Enum):
     IGNORE = "ignore"
     REPAIR = "repair"
     QUARANTINE = "quarantine"
+    REBUILD = "rebuild"
 
 
 @dataclass(frozen=True)

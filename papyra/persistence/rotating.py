@@ -713,16 +713,12 @@ class RotatingFilePersistence(PersistenceBackend):
                 which files were repaired, and which were quarantined. Returns None if the
                 initial scan fails to initialize.
         """
-        # Initialize configuration; if None is provided, fall back to the default defaults
         cfg = config or PersistenceRecoveryConfig()
 
-        # Perform an initial scan to detect any file system or data anomalies
         scan = await self.scan()
         if scan is None:
             return None
 
-        # If the mode is set to IGNORE or if no anomalies were found, return the report
-        # immediately without modifying any files.
         if cfg.mode is PersistenceRecoveryMode.IGNORE or not scan.has_anomalies:
             return PersistenceRecoveryReport(backend="rotating", scan=scan)
 
@@ -730,87 +726,84 @@ class RotatingFilePersistence(PersistenceBackend):
         quarantined_files: list[str] = []
 
         # ---------------------------------------------------------
-        # Step 1: Identify unexpected or orphaned files
+        # STEP 1: Collect all valid records globally
         # ---------------------------------------------------------
-        # Define the set of filenames we strictly expect based on the rotation logic
-        expected = {
-            str(self._path),
-            *(str(self._rotated_path(i)) for i in range(1, self._max_files)),
-        }
-        # Find all files actually present on disk that match the log pattern
-        existing = {str(p) for p in self._path.parent.glob(self._path.name + "*")}
-        # Determine the difference: files that exist but are not in the expected set
-        unexpected = sorted(existing - expected)
+        records: list[dict[str, Any]] = []
 
-        # ---------------------------------------------------------
-        # Step 2: Quarantine unexpected files (if configured)
-        # ---------------------------------------------------------
-        if cfg.mode is PersistenceRecoveryMode.QUARANTINE and unexpected:
-            # Determine the quarantine directory; default to the log's parent directory
-            qdir = Path(cfg.quarantine_dir) if cfg.quarantine_dir else self._path.parent
-            qdir.mkdir(parents=True, exist_ok=True)
-            stamp = int(time.time() * 1000)
-
-            for p in unexpected:
-                src = Path(p)
-                if not src.exists():
-                    continue
-                # Move the unexpected file to the quarantine location with a timestamp suffix
-                qpath = qdir / f"{src.name}.quarantine.{stamp}"
-                os.replace(src, qpath)
-                quarantined_files.append(str(qpath))
-
-        # ---------------------------------------------------------
-        # Step 3: Rewrite expected files to remove corruption
-        # ---------------------------------------------------------
-        # Iterate through expected files from oldest to newest to preserve logical order
-        for p in self._iter_read_paths_oldest_first():  # type: ignore
-            if not p.exists():  # type: ignore
+        for p in self._iter_read_paths_oldest_first():
+            if not p.exists():
                 continue
 
-            valid_lines: list[str] = []
-
             try:
-                # Read the file line by line to filter valid JSON
-                async with await anyio.open_file(p, "r", encoding="utf-8") as rf:
-                    async for line in rf:
-                        # If a line is missing the newline character at the end, it is
-                        # considered truncated (e.g., partial write during a crash).
-                        # We stop processing this file here.
+                async with await anyio.open_file(p, "r", encoding="utf-8") as f:
+                    async for line in f:
                         if not line.endswith("\n"):
                             break
                         try:
                             obj = json.loads(line)
                         except Exception:
-                            # Skip lines that are not valid JSON (corruption in the middle)
                             continue
                         if isinstance(obj, dict):
-                            # Re-serialize to ensure clean formatting
-                            valid_lines.append(json.dumps(obj, default=_json_default) + "\n")
+                            records.append(obj)
             except OSError:
-                # If the file is completely unreadable, we treat it as fully bad.
-                # 'valid_lines' remains empty, effectively clearing the file on rewrite.
-                valid_lines = []
+                continue
 
-            # If QUARANTINE mode is active, backup the original corrupted file before rewriting
-            if cfg.mode is PersistenceRecoveryMode.QUARANTINE:
-                qdir = Path(cfg.quarantine_dir) if cfg.quarantine_dir else p.parent  # type: ignore
-                qdir.mkdir(parents=True, exist_ok=True)
-                stamp = int(time.time() * 1000)
-                qpath = qdir / f"{p.name}.quarantine.{stamp}"  # type: ignore
+        # ---------------------------------------------------------
+        # STEP 2: Apply retention globally
+        # ---------------------------------------------------------
+        if self.retention is not None:
+            records = apply_retention(records, self.retention)
+
+        # ---------------------------------------------------------
+        # STEP 3: Quarantine entire previous rotation set (optional)
+        # ---------------------------------------------------------
+        if cfg.mode is PersistenceRecoveryMode.QUARANTINE:
+            qdir = Path(cfg.quarantine_dir) if cfg.quarantine_dir else self._path.parent
+            qdir.mkdir(parents=True, exist_ok=True)
+            stamp = int(time.time() * 1000)
+
+            for p in self._iter_read_paths_oldest_first():
+                if not p.exists():
+                    continue
+                qpath = qdir / f"{p.name}.quarantine.{stamp}"
                 os.replace(p, qpath)
                 quarantined_files.append(str(qpath))
 
-            # Write the valid lines to a temporary file first to ensure atomicity
-            tmp = p.with_suffix(p.suffix + ".recovered.tmp")  # type: ignore
+        # ---------------------------------------------------------
+        # STEP 4: Rebuild rotation set from scratch
+        # ---------------------------------------------------------
+        buffers: list[list[str]] = [[]]
+        current_bytes = 0
+
+        for row in records:
+            line = json.dumps(row, default=_json_default) + "\n"
+            size = len(line.encode("utf-8"))
+
+            if current_bytes + size > self._max_bytes:
+                buffers.append([])
+                current_bytes = 0
+
+            buffers[-1].append(line)
+            current_bytes += size
+
+        # Enforce max_files (drop oldest if overflow)
+        buffers = buffers[-self._max_files :]
+
+        # Write files oldest -> newest
+        for idx, lines in enumerate(reversed(buffers)):
+            if idx == 0:
+                target = self._path
+            else:
+                target = self._rotated_path(idx)
+
+            tmp = target.with_suffix(target.suffix + ".recovered.tmp")
             async with await anyio.open_file(tmp, "w", encoding="utf-8") as wf:
-                for line in valid_lines:
+                for line in lines:
                     await wf.write(line)
                 await wf.flush()
 
-            # Replace the original file with the repaired temporary file
-            os.replace(tmp, p)
-            repaired_files.append(str(p))
+            os.replace(tmp, target)
+            repaired_files.append(str(target))
 
         return PersistenceRecoveryReport(
             backend="rotating",
