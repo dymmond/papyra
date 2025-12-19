@@ -5,11 +5,13 @@ from typing import Any
 from papyra._envelope import DeadLetter
 from papyra.audit import AuditReport
 from papyra.events import ActorEvent
-from papyra.persistence.models import PersistenceScanReport
-from papyra.persistence.retention import RetentionPolicy
+
+from .metrics import PersistenceMetricsMixin
+from .models import PersistenceScanReport
+from .retention import RetentionPolicy
 
 
-class PersistenceBackend:
+class PersistenceBackend(PersistenceMetricsMixin):
     """
     Defines the interface for pluggable persistence and observability backends.
 
@@ -29,6 +31,7 @@ class PersistenceBackend:
     """
 
     def __init__(self, *, retention_policy: RetentionPolicy | None = None) -> None:
+        super().__init__()
         self._retention = retention_policy or RetentionPolicy()
 
     @property
@@ -148,11 +151,7 @@ class PersistenceBackend:
         Default implementation does nothing.
 
         Startup semantics
-        -----------------
-        - MAY mutate storage
-        - MUST be safe to call before ActorSystem task group exists
-        - MUST NOT emit events or audits
-        - MUST be idempotent for the same input state
+        -PersistenceBackend
 
         Returns
         -------
