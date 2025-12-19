@@ -96,7 +96,7 @@ def test_metrics_reset():
         "anomalies_detected": 0,
         "recoveries": 0,
         "compactions": 0,
-        "write_errors": 9,  # intentionally NOT reset
+        "write_errors": 9,
         "scan_errors": 8,
         "recovery_errors": 7,
         "compaction_errors": 6,
