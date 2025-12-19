@@ -224,7 +224,8 @@ class RotatingFilePersistence(PersistenceBackend):
         Append a single dictionary record to the active log file in NDJSON format.
 
         This method handles the serialization of the record, checks if rotation is required,
-        and performs the write operation safely using a lock.
+        and performs the write operation safely using a lock. Persistence metrics are updated
+        on write success or error.
 
         Args:
             record (dict[str, Any]): The dictionary containing data to be stored.
@@ -232,22 +233,24 @@ class RotatingFilePersistence(PersistenceBackend):
         if self._closed:
             return
 
-        # Serialize to JSON and append a newline character
         line = json.dumps(record, default=_json_default) + "\n"
         line_bytes = len(line.encode("utf-8"))
 
-        # Acquire lock to ensure no other coroutine is writing or rotating simultaneously
-        async with self._lock:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            # Check if this write triggers a rotation before actually writing
-            await self._maybe_rotate(line_bytes)
+        try:
+            async with self._lock:
+                self._path.parent.mkdir(parents=True, exist_ok=True)
+                await self._maybe_rotate(line_bytes)
 
-            async with await anyio.open_file(self._path, "a", encoding="utf-8") as f:
-                await f.write(line)
-                await f.flush()
-                # Perform fsync if durability is strictly required
-                if self._fsync:
-                    await anyio.to_thread.run_sync(os.fsync, f.fileno)  # type: ignore
+                async with await anyio.open_file(self._path, "a", encoding="utf-8") as f:
+                    await f.write(line)
+                    await f.flush()
+                    if self._fsync:
+                        await anyio.to_thread.run_sync(os.fsync, f.fileno)  # type: ignore
+
+            await self._metrics_on_write_ok(records=1, bytes_written=line_bytes)
+        except Exception:
+            await self._metrics_on_write_error()
+            raise
 
     async def _read_all(self) -> list[dict[str, Any]]:
         """
@@ -494,102 +497,107 @@ class RotatingFilePersistence(PersistenceBackend):
         - Rewrites records into a minimal set of files respecting max_bytes
         - Atomically replaces old files
         """
-        async with self._lock:
-            # Read all raw rows
-            rows: list[dict[str, Any]] = []
-            before_bytes = 0
+        await self._metrics_on_compact_start()
+        try:
+            async with self._lock:
+                # Read all raw rows
+                rows: list[dict[str, Any]] = []
+                before_bytes = 0
 
-            for p in self._iter_read_paths_oldest_first():
-                if not p.exists():
-                    continue
+                for p in self._iter_read_paths_oldest_first():
+                    if not p.exists():
+                        continue
 
-                try:
-                    before_bytes += p.stat().st_size
-                    async with await anyio.open_file(p, "r", encoding="utf-8") as f:
-                        async for line in f:
-                            line = line.strip()
-                            if not line:
-                                continue
-                            try:
-                                obj = json.loads(line)
-                            except Exception:
-                                continue
-                            if isinstance(obj, dict):
-                                rows.append(obj)
-                except OSError:
-                    # File may disappear during compaction preparation
-                    continue
+                    try:
+                        before_bytes += p.stat().st_size
+                        async with await anyio.open_file(p, "r", encoding="utf-8") as f:
+                            async for line in f:
+                                line = line.strip()
+                                if not line:
+                                    continue
+                                try:
+                                    obj = json.loads(line)
+                                except Exception:
+                                    continue
+                                if isinstance(obj, dict):
+                                    rows.append(obj)
+                    except OSError:
+                        # File may disappear during compaction preparation
+                        continue
 
-            before_records = len(rows)
+                before_records = len(rows)
 
-            # Apply retention
-            if self.retention is not None:
-                rows = apply_retention(rows, self.retention)
+                # Apply retention
+                if self.retention is not None:
+                    rows = apply_retention(rows, self.retention)
 
-            after_records = len(rows)
+                after_records = len(rows)
 
-            # Split rows into chunks respecting max_bytes
-            chunks: list[list[str]] = []
-            current_chunk: list[str] = []
-            current_size = 0
+                # Split rows into chunks respecting max_bytes
+                chunks: list[list[str]] = []
+                current_chunk: list[str] = []
+                current_size = 0
 
-            for row in rows:
-                line = json.dumps(row, default=_json_default) + "\n"
-                size = len(line.encode("utf-8"))
+                for row in rows:
+                    line = json.dumps(row, default=_json_default) + "\n"
+                    size = len(line.encode("utf-8"))
 
-                if current_chunk and current_size + size > self._max_bytes:
+                    if current_chunk and current_size + size > self._max_bytes:
+                        chunks.append(current_chunk)
+                        current_chunk = []
+                        current_size = 0
+
+                    current_chunk.append(line)
+                    current_size += size
+
+                if current_chunk:
                     chunks.append(current_chunk)
-                    current_chunk = []
-                    current_size = 0
 
-                current_chunk.append(line)
-                current_size += size
+                # Enforce max_files limit (keep newest chunks)
+                if len(chunks) > self._max_files:
+                    chunks = chunks[-self._max_files :]
 
-            if current_chunk:
-                chunks.append(current_chunk)
+                # --- Write temp files ---
+                tmp_paths: list[Path] = []
 
-            # Enforce max_files limit (keep newest chunks)
-            if len(chunks) > self._max_files:
-                chunks = chunks[-self._max_files :]
+                for idx, chunk in enumerate(reversed(chunks)):
+                    # idx == 0 → active file
+                    if idx == 0:
+                        tmp = self._path.with_suffix(self._path.suffix + ".compact.tmp")
+                    else:
+                        tmp = self._rotated_path(idx).with_suffix(self._rotated_path(idx).suffix + ".compact.tmp")
 
-            # --- Write temp files ---
-            tmp_paths: list[Path] = []
+                    async with await anyio.open_file(tmp, "w", encoding="utf-8") as f:
+                        for line in chunk:
+                            await f.write(line)
+                        await f.flush()
 
-            for idx, chunk in enumerate(reversed(chunks)):
-                # idx == 0 → active file
-                if idx == 0:
-                    tmp = self._path.with_suffix(self._path.suffix + ".compact.tmp")
-                else:
-                    tmp = self._rotated_path(idx).with_suffix(self._rotated_path(idx).suffix + ".compact.tmp")
+                    tmp_paths.append(tmp)
 
-                async with await anyio.open_file(tmp, "w", encoding="utf-8") as f:
-                    for line in chunk:
-                        await f.write(line)
-                    await f.flush()
+                # First remove old files
+                for p in self._iter_read_paths_oldest_first():
+                    try:
+                        p.unlink()
+                    except FileNotFoundError:
+                        pass
 
-                tmp_paths.append(tmp)
+                # Then move new compacted files into place
+                for tmp in tmp_paths:
+                    final = Path(str(tmp).replace(".compact.tmp", ""))
+                    os.replace(tmp, final)
 
-            # First remove old files
-            for p in self._iter_read_paths_oldest_first():
-                try:
-                    p.unlink()
-                except FileNotFoundError:
-                    pass
+                after_bytes = sum(p.stat().st_size for p in self._iter_read_paths_oldest_first() if p.exists())
 
-            # Then move new compacted files into place
-            for tmp in tmp_paths:
-                final = Path(str(tmp).replace(".compact.tmp", ""))
-                os.replace(tmp, final)
-
-            after_bytes = sum(p.stat().st_size for p in self._iter_read_paths_oldest_first() if p.exists())
-
-        return CompactionReport(
-            backend="rotating",
-            before_records=before_records,
-            after_records=after_records,
-            before_bytes=before_bytes,
-            after_bytes=after_bytes,
-        )
+            return CompactionReport(
+                backend="rotating",
+                before_records=before_records,
+                after_records=after_records,
+                before_bytes=before_bytes,
+                after_bytes=after_bytes,
+            )
+        except Exception:
+            await self._metrics_on_compact_error()
+            raise
 
     async def scan(self) -> PersistenceScanReport:
         """
@@ -610,80 +618,86 @@ class RotatingFilePersistence(PersistenceBackend):
             PersistenceScanReport: A report object containing a tuple of all detected
                 anomalies. If no issues are found, the tuple is empty.
         """
-        anomalies: list[PersistenceAnomaly] = []
+        await self._metrics_on_scan_start()
+        try:
+            anomalies: list[PersistenceAnomaly] = []
 
-        # ---------------------------------------------------------
-        # Phase 1: Detect File System Anomalies (Orphans)
-        # ---------------------------------------------------------
-        # Calculate the set of file paths that are valid according to the rotation policy
-        expected = {
-            str(self._path),
-            *(str(self._rotated_path(i)) for i in range(1, self._max_files)),
-        }
+            # ---------------------------------------------------------
+            # Phase 1: Detect File System Anomalies (Orphans)
+            # ---------------------------------------------------------
+            # Calculate the set of file paths that are valid according to the rotation policy
+            expected = {
+                str(self._path),
+                *(str(self._rotated_path(i)) for i in range(1, self._max_files)),
+            }
 
-        # Find all files actually present on disk that match the base filename pattern
-        existing = {str(p) for p in self._path.parent.glob(self._path.name + "*")}
+            # Find all files actually present on disk that match the base filename pattern
+            existing = {str(p) for p in self._path.parent.glob(self._path.name + "*")}
 
-        # Any existing file that is not in the expected set is considered orphaned
-        for p in existing - expected:
-            anomalies.append(
-                PersistenceAnomaly(
-                    type=PersistenceAnomalyType.ORPHANED_ROTATED_FILE,
-                    path=p,
-                    detail="Unexpected file in rotation set",
-                )
-            )
-
-        # ---------------------------------------------------------
-        # Phase 2: Detect Content Anomalies (Corruption/Truncation)
-        # ---------------------------------------------------------
-        # Iterate over all valid files, generally checking oldest first
-        for p in self._iter_read_paths_oldest_first():  # type: ignore
-            if not p.exists():  # type: ignore
-                continue
-
-            try:
-                async with await anyio.open_file(p, "r", encoding="utf-8") as file:
-                    idx = 0
-                    async for line in file:
-                        idx += 1
-                        # Check for truncation: The last written line must have a newline
-                        if not line.endswith("\n"):
-                            anomalies.append(
-                                PersistenceAnomaly(
-                                    type=PersistenceAnomalyType.TRUNCATED_LINE,
-                                    path=str(p),
-                                    detail=f"Line {idx} missing newline",
-                                )
-                            )
-                            # A truncated line usually means the end of valid data
-                            break
-
-                        # Check for corruption: Ensure the line is valid JSON
-                        try:
-                            json.loads(line)
-                        except Exception:
-                            anomalies.append(
-                                PersistenceAnomaly(
-                                    type=PersistenceAnomalyType.CORRUPTED_LINE,
-                                    path=str(p),
-                                    detail=f"Invalid JSON at line {idx}",
-                                )
-                            )
-            except OSError:
-                # If the file exists but cannot be read, report it as a partial/failed write
+            # Any existing file that is not in the expected set is considered orphaned
+            for p in existing - expected:
                 anomalies.append(
                     PersistenceAnomaly(
-                        type=PersistenceAnomalyType.PARTIAL_WRITE,
-                        path=str(p),
-                        detail="File could not be read fully",
+                        type=PersistenceAnomalyType.ORPHANED_ROTATED_FILE,
+                        path=p,
+                        detail="Unexpected file in rotation set",
                     )
                 )
 
-        return PersistenceScanReport(
-            backend="rotating",
-            anomalies=tuple(anomalies),
-        )
+            # ---------------------------------------------------------
+            # Phase 2: Detect Content Anomalies (Corruption/Truncation)
+            # ---------------------------------------------------------
+            # Iterate over all valid files, generally checking oldest first
+            for p in self._iter_read_paths_oldest_first():  # type: ignore
+                if not p.exists():  # type: ignore
+                    continue
+
+                try:
+                    async with await anyio.open_file(p, "r", encoding="utf-8") as file:
+                        idx = 0
+                        async for line in file:
+                            idx += 1
+                            # Check for truncation: The last written line must have a newline
+                            if not line.endswith("\n"):
+                                anomalies.append(
+                                    PersistenceAnomaly(
+                                        type=PersistenceAnomalyType.TRUNCATED_LINE,
+                                        path=str(p),
+                                        detail=f"Line {idx} missing newline",
+                                    )
+                                )
+                                # A truncated line usually means the end of valid data
+                                break
+
+                            # Check for corruption: Ensure the line is valid JSON
+                            try:
+                                json.loads(line)
+                            except Exception:
+                                anomalies.append(
+                                    PersistenceAnomaly(
+                                        type=PersistenceAnomalyType.CORRUPTED_LINE,
+                                        path=str(p),
+                                        detail=f"Invalid JSON at line {idx}",
+                                    )
+                                )
+                except OSError:
+                    # If the file exists but cannot be read, report it as a partial/failed write
+                    anomalies.append(
+                        PersistenceAnomaly(
+                            type=PersistenceAnomalyType.PARTIAL_WRITE,
+                            path=str(p),
+                            detail="File could not be read fully",
+                        )
+                    )
+
+            await self._metrics_on_anomalies_detected(len(anomalies))
+            return PersistenceScanReport(
+                backend="rotating",
+                anomalies=tuple(anomalies),
+            )
+        except Exception:
+            await self._metrics_on_scan_error()
+            raise
 
     async def recover(self, config: Any = None) -> PersistenceRecoveryReport | None:
         """
@@ -713,101 +727,106 @@ class RotatingFilePersistence(PersistenceBackend):
                 which files were repaired, and which were quarantined. Returns None if the
                 initial scan fails to initialize.
         """
-        cfg = config or PersistenceRecoveryConfig()
+        await self._metrics_on_recover_start()
+        try:
+            cfg = config or PersistenceRecoveryConfig()
 
-        scan = await self.scan()
-        if scan is None:
-            return None
+            scan = await self.scan()
+            if scan is None:
+                return None
 
-        if cfg.mode is PersistenceRecoveryMode.IGNORE or not scan.has_anomalies:
-            return PersistenceRecoveryReport(backend="rotating", scan=scan)
+            if cfg.mode is PersistenceRecoveryMode.IGNORE or not scan.has_anomalies:
+                return PersistenceRecoveryReport(backend="rotating", scan=scan)
 
-        repaired_files: list[str] = []
-        quarantined_files: list[str] = []
+            repaired_files: list[str] = []
+            quarantined_files: list[str] = []
 
-        # ---------------------------------------------------------
-        # STEP 1: Collect all valid records globally
-        # ---------------------------------------------------------
-        records: list[dict[str, Any]] = []
-
-        for p in self._iter_read_paths_oldest_first():
-            if not p.exists():
-                continue
-
-            try:
-                async with await anyio.open_file(p, "r", encoding="utf-8") as f:
-                    async for line in f:
-                        if not line.endswith("\n"):
-                            break
-                        try:
-                            obj = json.loads(line)
-                        except Exception:
-                            continue
-                        if isinstance(obj, dict):
-                            records.append(obj)
-            except OSError:
-                continue
-
-        # ---------------------------------------------------------
-        # STEP 2: Apply retention globally
-        # ---------------------------------------------------------
-        if self.retention is not None:
-            records = apply_retention(records, self.retention)
-
-        # ---------------------------------------------------------
-        # STEP 3: Quarantine entire previous rotation set (optional)
-        # ---------------------------------------------------------
-        if cfg.mode is PersistenceRecoveryMode.QUARANTINE:
-            qdir = Path(cfg.quarantine_dir) if cfg.quarantine_dir else self._path.parent
-            qdir.mkdir(parents=True, exist_ok=True)
-            stamp = int(time.time() * 1000)
+            # ---------------------------------------------------------
+            # STEP 1: Collect all valid records globally
+            # ---------------------------------------------------------
+            records: list[dict[str, Any]] = []
 
             for p in self._iter_read_paths_oldest_first():
                 if not p.exists():
                     continue
-                qpath = qdir / f"{p.name}.quarantine.{stamp}"
-                os.replace(p, qpath)
-                quarantined_files.append(str(qpath))
 
-        # ---------------------------------------------------------
-        # STEP 4: Rebuild rotation set from scratch
-        # ---------------------------------------------------------
-        buffers: list[list[str]] = [[]]
-        current_bytes = 0
+                try:
+                    async with await anyio.open_file(p, "r", encoding="utf-8") as f:
+                        async for line in f:
+                            if not line.endswith("\n"):
+                                break
+                            try:
+                                obj = json.loads(line)
+                            except Exception:
+                                continue
+                            if isinstance(obj, dict):
+                                records.append(obj)
+                except OSError:
+                    continue
 
-        for row in records:
-            line = json.dumps(row, default=_json_default) + "\n"
-            size = len(line.encode("utf-8"))
+            # ---------------------------------------------------------
+            # STEP 2: Apply retention globally
+            # ---------------------------------------------------------
+            if self.retention is not None:
+                records = apply_retention(records, self.retention)
 
-            if current_bytes + size > self._max_bytes:
-                buffers.append([])
-                current_bytes = 0
+            # ---------------------------------------------------------
+            # STEP 3: Quarantine entire previous rotation set (optional)
+            # ---------------------------------------------------------
+            if cfg.mode is PersistenceRecoveryMode.QUARANTINE:
+                qdir = Path(cfg.quarantine_dir) if cfg.quarantine_dir else self._path.parent
+                qdir.mkdir(parents=True, exist_ok=True)
+                stamp = int(time.time() * 1000)
 
-            buffers[-1].append(line)
-            current_bytes += size
+                for p in self._iter_read_paths_oldest_first():
+                    if not p.exists():
+                        continue
+                    qpath = qdir / f"{p.name}.quarantine.{stamp}"
+                    os.replace(p, qpath)
+                    quarantined_files.append(str(qpath))
 
-        # Enforce max_files (drop oldest if overflow)
-        buffers = buffers[-self._max_files :]
+            # ---------------------------------------------------------
+            # STEP 4: Rebuild rotation set from scratch
+            # ---------------------------------------------------------
+            buffers: list[list[str]] = [[]]
+            current_bytes = 0
 
-        # Write files oldest -> newest
-        for idx, lines in enumerate(reversed(buffers)):
-            if idx == 0:
-                target = self._path
-            else:
-                target = self._rotated_path(idx)
+            for row in records:
+                line = json.dumps(row, default=_json_default) + "\n"
+                size = len(line.encode("utf-8"))
 
-            tmp = target.with_suffix(target.suffix + ".recovered.tmp")
-            async with await anyio.open_file(tmp, "w", encoding="utf-8") as wf:
-                for line in lines:
-                    await wf.write(line)
-                await wf.flush()
+                if current_bytes + size > self._max_bytes:
+                    buffers.append([])
+                    current_bytes = 0
 
-            os.replace(tmp, target)
-            repaired_files.append(str(target))
+                buffers[-1].append(line)
+                current_bytes += size
 
-        return PersistenceRecoveryReport(
-            backend="rotating",
-            scan=scan,
-            repaired_files=tuple(repaired_files),
-            quarantined_files=tuple(quarantined_files),
-        )
+            # Enforce max_files (drop oldest if overflow)
+            buffers = buffers[-self._max_files :]
+
+            # Write files oldest -> newest
+            for idx, lines in enumerate(reversed(buffers)):
+                if idx == 0:
+                    target = self._path
+                else:
+                    target = self._rotated_path(idx)
+
+                tmp = target.with_suffix(target.suffix + ".recovered.tmp")
+                async with await anyio.open_file(tmp, "w", encoding="utf-8") as wf:
+                    for line in lines:
+                        await wf.write(line)
+                    await wf.flush()
+
+                os.replace(tmp, target)
+                repaired_files.append(str(target))
+
+            return PersistenceRecoveryReport(
+                backend="rotating",
+                scan=scan,
+                repaired_files=tuple(repaired_files),
+                quarantined_files=tuple(quarantined_files),
+            )
+        except Exception:
+            await self._metrics_on_recovery_error()
+            raise

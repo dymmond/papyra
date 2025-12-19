@@ -181,6 +181,15 @@ class PersistenceMetricsMixin:
         async with self._metrics_lock:
             self.metrics.anomalies_detected += int(count)
 
+    async def _metrics_on_anomalies_detected(self, count: int) -> None:
+        """
+        Alias for recording detected anomalies during a scan.
+
+        This exists for semantic clarity at call sites where anomaly detection
+        is conceptually separate from scan initiation.
+        """
+        await self._metrics_on_scan_anomalies(count)
+
     async def _metrics_on_recover_start(self) -> None:
         """
         Record the initiation of a recovery process.
@@ -189,6 +198,14 @@ class PersistenceMetricsMixin:
         """
         async with self._metrics_lock:
             self.metrics.recoveries += 1
+
+    async def _metrics_on_recovery_error(self) -> None:
+        """
+        Record a failure during the recovery process.
+
+        This is an alias kept for API symmetry and backward compatibility.
+        """
+        await self._metrics_on_recover_error()
 
     async def _metrics_on_recover_error(self) -> None:
         """
