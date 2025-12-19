@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from typing import Any
 
 import anyio
 import anyio.abc
 
+from .base import PersistenceBackend
 from .models import (
     PersistedAudit,
     PersistedDeadLetter,
@@ -15,8 +15,7 @@ from .models import (
 )
 
 
-@dataclass(slots=True)
-class InMemoryPersistence:
+class InMemoryPersistence(PersistenceBackend):
     """
     A default, ephemeral implementation of the persistence backend storing data in memory.
 
@@ -48,15 +47,17 @@ class InMemoryPersistence:
         silent no-ops.
     """
 
-    _lock: anyio.abc.Lock = field(default_factory=anyio.Lock)
+    def __init__(self) -> None:
+        super().__init__()
+        self._lock: anyio.abc.Lock = anyio.Lock()
 
-    _events: list[PersistedEvent] = field(default_factory=list)
-    _audits: list[PersistedAudit] = field(default_factory=list)
-    _dead_letters: list[PersistedDeadLetter] = field(default_factory=list)
+        self._events: list[PersistedEvent] = []
+        self._audits: list[PersistedAudit] = []
+        self._dead_letters: list[PersistedDeadLetter] = []
 
-    _closed: bool = False
+        self._closed: bool = False
 
-    async def record_event(self, event: PersistedEvent) -> None:
+    async def record_event(self, event: PersistedEvent) -> None:  # type: ignore
         """
         Asynchronously append a lifecycle event record to the internal store.
 
@@ -68,12 +69,17 @@ class InMemoryPersistence:
         event : PersistedEvent
             The immutable event record to store.
         """
-        async with self._lock:
-            if self._closed:
-                return
-            self._events.append(event)
+        try:
+            async with self._lock:
+                if self._closed:
+                    return
+                self._events.append(event)
+                await self._metrics_on_write_ok(records=1, bytes_written=0)
+        except Exception:
+            await self._metrics_on_write_error()
+            raise
 
-    async def record_audit(self, audit: PersistedAudit) -> None:
+    async def record_audit(self, audit: PersistedAudit) -> None:  # type: ignore
         """
         Asynchronously append an audit snapshot record to the internal store.
 
@@ -82,12 +88,17 @@ class InMemoryPersistence:
         audit : PersistedAudit
             The immutable audit snapshot to store.
         """
-        async with self._lock:
-            if self._closed:
-                return
-            self._audits.append(audit)
+        try:
+            async with self._lock:
+                if self._closed:
+                    return
+                self._audits.append(audit)
+                await self._metrics_on_write_ok(records=1, bytes_written=0)
+        except Exception:
+            await self._metrics_on_write_error()
+            raise
 
-    async def record_dead_letter(self, dead_letter: PersistedDeadLetter) -> None:
+    async def record_dead_letter(self, dead_letter: PersistedDeadLetter) -> None:  # type: ignore
         """
         Asynchronously append a dead-letter record to the internal store.
 
@@ -96,10 +107,15 @@ class InMemoryPersistence:
         dead_letter : PersistedDeadLetter
             The immutable dead letter record to store.
         """
-        async with self._lock:
-            if self._closed:
-                return
-            self._dead_letters.append(dead_letter)
+        try:
+            async with self._lock:
+                if self._closed:
+                    return
+                self._dead_letters.append(dead_letter)
+                await self._metrics_on_write_ok(records=1, bytes_written=0)
+        except Exception:
+            await self._metrics_on_write_error()
+            raise
 
     async def list_events(
         self,
@@ -260,6 +276,7 @@ class InMemoryPersistence:
         persistence lifecycle contract and to allow uniform orchestration
         across backends.
         """
+        await self._metrics_on_compact_start()
         async with self._lock:
             return {
                 "backend": "memory",
@@ -273,11 +290,14 @@ class InMemoryPersistence:
         """
         In-memory persistence has no startup anomalies.
         """
-        return PersistenceScanReport(
+        await self._metrics_on_scan_start()
+        report = PersistenceScanReport(
             backend="memory",
             anomalies=(),
         )
+        return report
 
     async def recover(self, config: Any = None) -> PersistenceRecoveryReport:
+        await self._metrics_on_recover_start()
         scan = PersistenceScanReport(backend="memory", anomalies=())
         return PersistenceRecoveryReport(backend="memory", scan=scan)

@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Mapping
 
+import anyio
+
 
 @dataclass(slots=True)
 class PersistenceMetrics:
@@ -108,6 +110,7 @@ class PersistenceMetricsMixin:
         to zero, ready to track backend activity.
         """
         self._metrics = PersistenceMetrics()
+        self._metrics_lock: anyio.Lock = anyio.Lock()
 
     @property
     def metrics(self) -> PersistenceMetrics:
@@ -122,3 +125,94 @@ class PersistenceMetricsMixin:
             PersistenceMetrics: The container holding the current statistical counters.
         """
         return self._metrics
+
+    async def _metrics_on_write_ok(self, *, bytes_written: int = 0, records: int = 1) -> None:
+        """
+        Record a successful write operation.
+
+        Args:
+            bytes_written (int, optional): The number of bytes written to storage.
+                Defaults to 0.
+            records (int, optional): The number of logical records written.
+                Defaults to 1.
+        """
+        async with self._metrics_lock:
+            self.metrics.records_written += records
+            # Ensure we don't subtract bytes if a negative value is accidentally passed
+            self.metrics.bytes_written += max(0, int(bytes_written))
+
+    async def _metrics_on_write_error(self) -> None:
+        """
+        Record a failed write operation.
+
+        Increments the `write_errors` counter.
+        """
+        async with self._metrics_lock:
+            self.metrics.write_errors += 1
+
+    async def _metrics_on_scan_start(self) -> None:
+        """
+        Record the initiation of a persistence scan.
+
+        Increments the `scans` counter.
+        """
+        async with self._metrics_lock:
+            self.metrics.scans += 1
+
+    async def _metrics_on_scan_error(self) -> None:
+        """
+        Record a failure during a persistence scan.
+
+        Increments the `scan_errors` counter.
+        """
+        async with self._metrics_lock:
+            self.metrics.scan_errors += 1
+
+    async def _metrics_on_scan_anomalies(self, count: int) -> None:
+        """
+        Record anomalies detected during a scan.
+
+        Args:
+            count (int): The number of anomalies found. If less than or equal to 0,
+                no update is performed.
+        """
+        if count <= 0:
+            return
+        async with self._metrics_lock:
+            self.metrics.anomalies_detected += int(count)
+
+    async def _metrics_on_recover_start(self) -> None:
+        """
+        Record the initiation of a recovery process.
+
+        Increments the `recoveries` counter.
+        """
+        async with self._metrics_lock:
+            self.metrics.recoveries += 1
+
+    async def _metrics_on_recover_error(self) -> None:
+        """
+        Record a failure during the recovery process.
+
+        Increments the `recovery_errors` counter.
+        """
+        async with self._metrics_lock:
+            self.metrics.recovery_errors += 1
+
+    async def _metrics_on_compact_start(self) -> None:
+        """
+        Record the initiation of a compaction operation.
+
+        Increments the `compactions` counter.
+        """
+        async with self._metrics_lock:
+            self.metrics.compactions += 1
+
+    async def _metrics_on_compact_error(self) -> None:
+        """
+        Record a failure during a compaction operation.
+
+        Increments the `compaction_errors` counter.
+        """
+        async with self._metrics_lock:
+            self.metrics.compaction_errors += 1
