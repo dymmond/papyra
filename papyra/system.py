@@ -230,7 +230,7 @@ class ActorSystem:
         self._hooks: SystemHooks | DefaultHooks = hooks or DefaultHooks()
         self._user_on_dead_letter = on_dead_letter
         self._time_fn: Callable[[], float] = time_fn or anyio.current_time
-        self._persistence: PersistenceBackend = persistence or InMemoryPersistence()  # type: ignore
+        self._persistence: PersistenceBackend = persistence or InMemoryPersistence()
         self._persistence_recovery = persistence_recovery
         self._persistence_startup = persistence_startup
 
