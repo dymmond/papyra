@@ -15,3 +15,13 @@ __all__ = [
     "backend_capabilities",
     "safe_metrics_snapshot",
 ]
+
+try:  # pragma: no cover
+    from .redis import RedisStreamsConfig, RedisStreamsPersistence  # noqa: F401
+
+    __all__ += [
+        "RedisStreamsConfig",
+        "RedisStreamsPersistence",
+    ]
+except Exception:  # noqa
+    ...
