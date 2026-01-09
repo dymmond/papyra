@@ -3,6 +3,7 @@ from __future__ import annotations
 from sayer import Sayer
 
 from papyra import __version__
+from papyra.cli.doctor.app import doctor
 from papyra.cli.inspect.app import inspect
 from papyra.cli.metrics.app import metrics
 from papyra.cli.persistence.app import persistence
@@ -30,3 +31,4 @@ def callback() -> None: ...
 app.add_command(inspect)
 app.add_command(persistence)
 app.add_command(metrics)
+app.add_command(doctor)

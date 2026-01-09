@@ -6,6 +6,7 @@ from typing import Annotated, Any
 from sayer import Option, error, group, info, success
 
 from papyra import monkay
+from papyra.persistence.base import PersistenceBackend
 from papyra.persistence.json import JsonFilePersistence
 from papyra.persistence.models import (
     PersistenceRecoveryConfig,
@@ -272,3 +273,95 @@ async def compact(
 
     # Fallback (best effort)
     info("Compaction completed")
+
+
+@persistence.command()
+async def inspect(
+    path: Annotated[Path | None, Option(None, help="Persistence file path")],
+    limit: Annotated[
+        int,
+        Option(1000, help="Max items per category to sample for counts"),
+    ] = 1000,
+    show_metrics: Annotated[
+        bool,
+        Option(False, help="Show metrics snapshot (if backend supports it)"),
+    ] = False,
+) -> None:
+    """
+    Display a high-level summary of the persistence backend's configuration and state.
+
+    This command inspects the active persistence layer to report its type, retention
+    policies, and approximate data counts. It provides a quick way to verify that
+    the backend is configured correctly and is operational.
+
+    Features:
+    - **Backend Identification**: Shows the class name of the active backend.
+    - **Retention Policy**: detailed dump of active retention rules (max records, age, etc).
+    - **Quick Counts**: Samples the most recent records (up to `limit`) to provide
+      a rough estimate of the volume of events, audits, and dead letters.
+    - **Metrics (Optional)**: If requested, displays the internal performance counters.
+
+    Args:
+        path (Path | None): Overrides the default persistence path. Useful for inspecting
+            backup files or offline logs. Defaults to None.
+        limit (int): The maximum number of items to retrieve per category (events, audits)
+            when calculating counts. This prevents the inspection from hanging on massive
+            datasets. Defaults to 1000.
+        show_metrics (bool): If True, appends the backend's internal metrics snapshot
+            to the output. Defaults to False.
+    """
+    # Resolve the persistence backend (either system default or file-specific)
+    backend: PersistenceBackend = _get_persistence(path)
+
+    info("Persistence Inspect")
+    info("------------------")
+    info(f"backend: {type(backend).__name__}")
+
+    # ---------------------------------------------------------
+    # Retention Policy Inspection
+    # ---------------------------------------------------------
+    # Safely retrieve retention attributes without assuming the object shape
+    r = getattr(backend, "retention", None)
+    if r is None:
+        info("retention: <none>")
+    else:
+        info(
+            f"retention: max_records={getattr(r, 'max_records', None)} "
+            f"max_age_seconds={getattr(r, 'max_age_seconds', None)} "
+            f"max_total_bytes={getattr(r, 'max_total_bytes', None)}"
+        )
+
+    # ---------------------------------------------------------
+    # Data Sampling / Counts
+    # ---------------------------------------------------------
+    # We use a try-block because 'list_*' methods might not be supported by all backends
+    # or might fail if the underlying storage is unreachable.
+    try:
+        # type ignores are necessary because the base PersistenceBackend protocol
+        # might not strictly define these list methods for all implementations.
+        events = await backend.list_events(limit=limit)  # type: ignore[attr-defined]
+        audits = await backend.list_audits(limit=limit)  # type: ignore[attr-defined]
+        dls = await backend.list_dead_letters(limit=limit)  # type: ignore[attr-defined]
+
+        info(f"events_sampled: {len(events)}{' (capped)' if len(events) == limit else ''}")
+        info(f"audits_sampled: {len(audits)}{' (capped)' if len(audits) == limit else ''}")
+        info(f"dead_letters_sampled: {len(dls)}{' (capped)' if len(dls) == limit else ''}")
+    except Exception:
+        info("counts: <unavailable>")
+
+    # ---------------------------------------------------------
+    # Metrics Inspection
+    # ---------------------------------------------------------
+    if show_metrics:
+        try:
+            # Check if the backend uses the PersistenceMetricsMixin
+            snap = backend.metrics.snapshot()
+        except Exception:
+            snap = {}
+
+        if not snap:
+            info("metrics: <unavailable>")
+        else:
+            info("metrics:")
+            for k, v in snap.items():
+                info(f"  {k}: {v}")
