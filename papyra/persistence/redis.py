@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal, Mapping
 
 import anyio
 import anyio.abc
@@ -24,6 +24,51 @@ from .models import (
     PersistenceScanReport,
 )
 from .retention import RetentionPolicy
+
+StreamKind = Literal["events", "audits", "dead_letters"]
+
+
+@dataclass(frozen=True, slots=True)
+class RedisConsumerGroupConfig:
+    """
+    Configuration for consuming persisted records via Redis Streams consumer groups.
+
+    This is for external tools and integrations (shipping, analytics, monitoring).
+    It does NOT affect how the ActorSystem writes records.
+
+    Notes:
+    - Each kind (events/audits/dead_letters) is a separate Redis stream.
+    - Consumer group semantics provide at-least-once delivery.
+    """
+
+    group: str
+    consumer: str
+
+    # How many items to request per XREADGROUP call
+    count: int = 100
+
+    # Block time in milliseconds (0 = no block, None = block forever)
+    block_ms: int | None = 1000
+
+    # Where to start when group is created:
+    # "0" = from beginning, "$" = only new entries
+    start_id: str = "0"
+
+    # If True, ensure groups exist at first read
+    ensure_group: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class RedisStreamEntry:
+    """
+    One consumed entry from a Redis stream.
+
+    `id` is the Redis stream entry id (e.g., "1700000000-0").
+    `data` is the decoded dictionary payload.
+    """
+
+    id: str
+    data: Mapping[str, Any]
 
 
 @dataclass(slots=True)
@@ -265,6 +310,320 @@ class RedisStreamsPersistence(PersistenceBackend):
             if isinstance(obj, dict):
                 out.append(obj)
         return out
+
+    def _stream_key(self, kind: StreamKind) -> str:
+        """
+        Resolve the specific Redis stream key for a given persistence category.
+
+        This internal helper maps the logical classification of data (events, audits,
+        or dead letters) to the actual configured Redis key. This allows the key naming
+        schema to be decoupled from the internal logic.
+
+        Args:
+            kind (StreamKind): The category of the stream to resolve (e.g., 'events').
+
+        Returns:
+            str: The fully qualified Redis key used for storage.
+
+        Raises:
+            ValueError: If the provided `kind` does not match any known stream category.
+        """
+        if kind == "events":
+            return self._events_key
+        if kind == "audits":
+            return self._audits_key
+        if kind == "dead_letters":
+            return self._dead_letters_key
+        raise ValueError(f"Unknown stream kind: {kind}")
+
+    def _decode_entry(self, fields: Any) -> dict[str, Any] | None:
+        """
+        Attempt to extract and deserialize a JSON payload from a Redis stream entry.
+
+        This helper method isolates the logic for converting raw Redis field data into a
+        usable Python dictionary. It specifically looks for a field named 'data' which
+        is expected to contain a JSON string.
+
+        Validation Logic:
+        - Input `fields` must be a dictionary.
+        - The 'data' key must exist and be a string.
+        - The string must be valid JSON.
+        - The resulting JSON object must be a dictionary.
+
+        Args:
+            fields (Any): The raw fields structure returned by the Redis client (typically
+                a dict mapping bytes/str to bytes/str).
+
+        Returns:
+            dict[str, Any] | None: The parsed dictionary if successful, or None if the
+                entry is malformed, missing the 'data' field, or contains invalid JSON.
+        """
+        # The Redis client should return a dict of fields, but we validate strictly
+        if not isinstance(fields, dict):
+            return None
+
+        raw = fields.get("data")
+        # Ensure the payload exists and is a string (client should decode_responses=True)
+        if not isinstance(raw, str):
+            return None
+
+        try:
+            obj = json.loads(raw)
+        except Exception:
+            # Parsing failed implies data corruption
+            return None
+
+        # We strictly require the persisted record to be a JSON object (dict)
+        return obj if isinstance(obj, dict) else None
+
+    async def ensure_consumer_group(
+        self,
+        *,
+        kind: StreamKind,
+        group: str,
+        start_id: str = "0",
+    ) -> None:
+        """
+        Idempotently ensure that a Redis Stream consumer group exists.
+
+        This method attempts to create a consumer group for the specified stream kind.
+        It handles the common race condition where the group might already exist, suppressing
+        the resulting "BUSYGROUP" error to ensure idempotency.
+
+        Mechanics:
+            - Uses `XGROUP CREATE ... MKSTREAM` to create the stream automatically if
+              it does not exist yet.
+            - Sets the initial pointer to `start_id` (default "0", meaning the beginning
+              of the stream) if the group is being newly created.
+
+        Args:
+            kind (StreamKind): The category of the stream (e.g., 'events').
+            group (str): The name of the consumer group to create.
+            start_id (str, optional): The stream ID from which the group should begin
+                processing if it is newly created. Defaults to "0" (process all history).
+        """
+        key = self._stream_key(kind)
+        try:
+            await self._redis.xgroup_create(
+                name=key,
+                groupname=group,
+                id=start_id,
+                mkstream=True,
+            )
+        except Exception as e:
+            # Redis raises a specific error if the group name is already taken.
+            # We catch generic Exception to be safe across redis-py versions, but check
+            # the message content to ensure we only suppress "already exists" errors.
+            msg = str(e).lower()
+            if "busygroup" in msg or "exists" in msg:
+                return
+            raise
+
+    async def consume(
+        self,
+        *,
+        kind: StreamKind,
+        cfg: RedisConsumerGroupConfig,
+        read_id: str = ">",
+    ) -> tuple[RedisStreamEntry, ...]:
+        """
+        Consume records from a Redis Stream using a consumer group.
+
+        This method wraps the `XREADGROUP` command to fetch messages distributed to
+        this specific consumer. It handles the raw Redis response format and decodes
+        valid JSON payloads into `RedisStreamEntry` objects.
+
+        Processing Semantics:
+            - **No Auto-Ack**: Messages returned here are added to the Pending Entries List
+              (PEL) and must be explicitly acknowledged via `ack()` later.
+            - **New vs. Pending**: If `read_id` is ">", Redis delivers new, unread messages.
+              If `read_id` is "0" (or another ID), it delivers unacknowledged pending messages.
+
+        Args:
+            kind (StreamKind): The stream category to consume from.
+            cfg (RedisConsumerGroupConfig): Configuration object containing the group name,
+                consumer name, batch count, and blocking behavior.
+            read_id (str, optional): The ID to start reading from. Defaults to ">" (new messages).
+
+        Returns:
+            tuple[RedisStreamEntry, ...]: A tuple of decoded stream entries. Corrupted
+                or malformed entries are skipped gracefully.
+        """
+        key = self._stream_key(kind)
+
+        # Lazy initialization: Ensure the group exists before trying to read.
+        if cfg.ensure_group:
+            await self.ensure_consumer_group(
+                kind=kind,
+                group=cfg.group,
+                start_id=cfg.start_id,
+            )
+
+        # Execute XREADGROUP. The response structure is:
+        # [[stream_name, [[id, fields], [id, fields], ...]]]
+        resp = await self._redis.xreadgroup(
+            groupname=cfg.group,
+            consumername=cfg.consumer,
+            streams={key: read_id},
+            count=cfg.count,
+            block=cfg.block_ms,
+        )
+
+        out: list[RedisStreamEntry] = []
+
+        # Iterate over streams (we usually only query one)
+        for _stream, entries in resp or []:
+            for entry_id, fields in entries:
+                # Attempt to parse the 'data' field JSON
+                obj = self._decode_entry(fields)
+                if obj is None:
+                    continue
+
+                # Append valid entries to the result list
+                out.append(RedisStreamEntry(id=str(entry_id), data=obj))
+
+        return tuple(out)
+
+    async def claim(
+        self,
+        kind: StreamKind,
+        *,
+        group: str,
+        consumer: str,
+        min_idle_ms: int,
+        entry_ids: list[str],
+    ) -> list[RedisStreamEntry]:
+        """
+        Transfer ownership of pending stream messages to a specific consumer.
+
+        This method executes the Redis `XCLAIM` command, which is essential for
+        recovering from consumer failures. If a consumer crashes or fails to acknowledge
+        a message within `min_idle_ms`, another consumer (or the same one upon restart)
+        can "claim" it.
+
+        Effects:
+        - The ownership of the messages with `entry_ids` is transferred to `consumer`.
+        - The idle time for these messages is reset.
+        - The messages are returned so they can be processed immediately.
+
+        Behavior:
+        - Only messages that have been idle longer than `min_idle_ms` are successfully claimed.
+        - Invalid or non-existent message IDs are ignored.
+        - Malformed payloads (non-JSON) found during the claim are skipped in the output,
+          but ownership is still transferred in Redis.
+
+        Args:
+            kind (StreamKind): The stream category (e.g., 'events').
+            group (str): The name of the consumer group.
+            consumer (str): The name of the consumer taking ownership.
+            min_idle_ms (int): The minimum time (in milliseconds) a message must have
+                been idle (unacknowledged) before it can be claimed.
+            entry_ids (list[str]): The list of message IDs to attempt to claim.
+
+        Returns:
+            list[RedisStreamEntry]: A list of successfully claimed and parsed messages.
+        """
+        key = self._stream_key(kind)
+
+        if not entry_ids:
+            return []
+
+        # Attempt XCLAIM. We use a try-except block to handle historical variations
+        # in the redis-py library's method signature, ensuring robustness across versions.
+        try:
+            entries = await self._redis.xclaim(
+                key,
+                groupname=group,
+                consumername=consumer,
+                min_idle_time=min_idle_ms,
+                message_ids=entry_ids,
+            )
+        except TypeError:
+            # Fallback for older or alternative redis-py signatures
+            entries = await self._redis.xclaim(
+                key,
+                group,
+                consumer,
+                min_idle_ms,
+                entry_ids,
+            )
+
+        out: list[RedisStreamEntry] = []
+
+        # Process the returned entries. Redis returns: list[tuple[id, dict[field, value]]]
+        for _id, fields in entries or []:
+            raw = None
+            if isinstance(fields, dict):
+                raw = fields.get("data")
+
+            # Validate payload is a string
+            if not isinstance(raw, str):
+                continue
+
+            try:
+                obj = json.loads(raw)
+            except Exception:
+                # Silently skip corruption; claiming is about delivery, not repair
+                continue
+
+            if isinstance(obj, dict):
+                out.append(RedisStreamEntry(id=str(_id), data=obj))
+
+        return out
+
+    async def ack(
+        self,
+        *,
+        kind: StreamKind,
+        group: str,
+        ids: list[str] | tuple[str, ...],
+    ) -> int:
+        """
+        Acknowledge successful processing of messages.
+
+        This calls `XACK` to remove the specified message IDs from the consumer group's
+        Pending Entries List (PEL). Once acknowledged, a message will not be redelivered
+        to other consumers.
+
+        Args:
+            kind (StreamKind): The stream category.
+            group (str): The name of the consumer group.
+            ids (list[str] | tuple[str, ...]): A collection of message IDs to acknowledge.
+
+        Returns:
+            int: The number of messages successfully acknowledged.
+        """
+        if not ids:
+            return 0
+        key = self._stream_key(kind)
+        return int(await self._redis.xack(key, group, *ids))
+
+    async def pending_summary(
+        self,
+        *,
+        kind: StreamKind,
+        group: str,
+    ) -> dict[str, Any]:
+        """
+        Retrieve a summary of pending messages for a consumer group.
+
+        This method wraps `XPENDING` to provide observability into consumer lag.
+        It returns data such as the total number of pending messages, the range of
+        message IDs, and a breakdown of pending counts per consumer.
+
+        Args:
+            kind (StreamKind): The stream category.
+            group (str): The consumer group name.
+
+        Returns:
+            dict[str, Any]: A dictionary containing the raw pending summary from Redis.
+                Useful for metrics or debugging tools.
+        """
+        key = self._stream_key(kind)
+        res = await self._redis.xpending(key, group)
+        # Wrap in a dict to future-proof against varying return types from different
+        # redis-py versions or mocks.
+        return {"raw": res}
 
     async def record_event(self, event: PersistedEvent) -> None:  # type: ignore
         """

@@ -36,7 +36,7 @@ class PersistedEvent:
     """
 
     system_id: str
-    actor_address: ActorAddress
+    actor_address: ActorAddress | str
     event_type: str
     payload: Mapping[str, Any]
     timestamp: float
