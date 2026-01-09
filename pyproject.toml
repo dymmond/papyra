@@ -72,6 +72,8 @@ testing = [
     "ipdb",
 ]
 
+redis = ["redis>=7.1.0"]
+
 [project.scripts]
 papyra = "papyra.cli.app:app"
 
@@ -105,7 +107,7 @@ serve_lang = "hatch run docs:update_languages; scripts/docs.py live --lang {args
 new_lang = "hatch run docs:update_languages; scripts/docs.py new-lang --lang {args}"
 
 [tool.hatch.envs.hatch-test]
-features = ["testing"]
+features = ["testing", "redis"]
 template = "test"
 
 [tool.hatch.envs.hatch-test.env-vars]

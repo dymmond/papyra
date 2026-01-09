@@ -80,7 +80,6 @@ class PersistenceMetrics:
                 "compaction_errors": self.compaction_errors,
             }
         except Exception:
-            # Absolute safety net
             return {}
 
 

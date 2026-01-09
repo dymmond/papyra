@@ -1,7 +1,7 @@
 import pytest
 
+from papyra.persistence.backends.rotating import RotatingFilePersistence
 from papyra.persistence.models import PersistedEvent
-from papyra.persistence.rotating import RotatingFilePersistence
 
 pytestmark = pytest.mark.anyio
 

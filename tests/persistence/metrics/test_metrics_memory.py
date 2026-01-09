@@ -1,6 +1,6 @@
 import pytest
 
-from papyra.persistence.memory import InMemoryPersistence
+from papyra.persistence.backends.memory import InMemoryPersistence
 
 pytestmark = pytest.mark.anyio
 

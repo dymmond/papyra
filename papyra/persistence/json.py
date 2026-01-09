@@ -10,7 +10,7 @@ from typing import Any, TypeVar
 import anyio
 import anyio.abc
 
-from papyra.persistence.retention import RetentionPolicy
+from papyra.persistence.backends.retention import RetentionPolicy
 
 from ._retention import apply_retention
 from ._utils import _json_default, _pick_dataclass_fields

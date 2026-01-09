@@ -5,8 +5,8 @@ from typing import Any
 import anyio
 import anyio.abc
 
-from .base import PersistenceBackend
-from .models import (
+from papyra.persistence.base import PersistenceBackend
+from papyra.persistence.models import (
     PersistedAudit,
     PersistedDeadLetter,
     PersistedEvent,

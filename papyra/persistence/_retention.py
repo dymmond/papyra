@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from .retention import RetentionPolicy
+from papyra.persistence.backends.retention import RetentionPolicy
 
 
 def apply_retention(

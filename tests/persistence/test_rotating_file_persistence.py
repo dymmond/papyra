@@ -4,12 +4,12 @@ from pathlib import Path
 
 import pytest
 
+from papyra.persistence.backends.rotating import RotatingFilePersistence
 from papyra.persistence.models import (
     PersistedAudit,
     PersistedDeadLetter,
     PersistedEvent,
 )
-from papyra.persistence.rotating import RotatingFilePersistence
 
 pytestmark = pytest.mark.anyio
 

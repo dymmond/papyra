@@ -3,7 +3,7 @@ import pytest
 from papyra._envelope import STOP
 from papyra.actor import Actor
 from papyra.exceptions import ActorStopped
-from papyra.persistence.memory import InMemoryPersistence
+from papyra.persistence.backends.memory import InMemoryPersistence
 from papyra.system import ActorSystem
 
 pytestmark = pytest.mark.anyio
