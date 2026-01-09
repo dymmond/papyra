@@ -59,9 +59,7 @@ def test_persistence_recover_quarantine(cli, tmp_path):
         encoding="utf-8",
     )
 
-    result = cli.invoke(
-        f"persistence recover --mode quarantine --quarantine-dir {qdir} --path {path}"
-    )
+    result = cli.invoke(f"persistence recover --mode quarantine --quarantine-dir {qdir} --path {path}")
 
     assert result.exit_code == 0
     assert qdir.exists()
@@ -88,9 +86,7 @@ def test_persistence_startup_check_recover(cli, tmp_path):
         encoding="utf-8",
     )
 
-    result = cli.invoke(
-        f"persistence startup-check --mode recover --recovery-mode repair --path {path}"
-    )
+    result = cli.invoke(f"persistence startup-check --mode recover --recovery-mode repair --path {path}")
 
     assert result.exit_code == 0
     assert "Recovery successful" in result.output

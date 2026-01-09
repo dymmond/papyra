@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from papyra import monkay
 from papyra.conf import settings
 from papyra.persistence.json import JsonFilePersistence
 
-pytestmark = pytest.mark.anyio
+pytestmark = [
+    pytest.mark.skipif(
+        sys.version_info < (3, 11),
+        reason="Requires Python 3.11+",
+    ),
+    pytest.mark.anyio,
+]
 
 
 def test_doctor_healthy(cli):
