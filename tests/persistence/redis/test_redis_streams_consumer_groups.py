@@ -4,8 +4,8 @@ from uuid import uuid4
 
 import pytest
 
+from papyra.persistence.backends.retention import RetentionPolicy
 from papyra.persistence.models import PersistedEvent
-from papyra.persistence.retention import RetentionPolicy
 from tests.conftest import _redis_available, _redis_url
 
 pytestmark = pytest.mark.anyio
@@ -14,7 +14,7 @@ pytestmark = pytest.mark.anyio
 async def test_redis_group_read_ack_roundtrip(tmp_path):
     prefix = f"papyra-test-group-1-{uuid4().hex}"
     try:
-        from papyra.persistence.redis import (
+        from papyra.persistence.backends.redis import (
             RedisConsumerGroupConfig,
             RedisStreamsConfig,
             RedisStreamsPersistence,
@@ -79,7 +79,7 @@ async def test_redis_group_read_ack_roundtrip(tmp_path):
 async def test_redis_pending_and_claim(tmp_path):
     prefix = f"papyra-test-group-2-{uuid4().hex}"
     try:
-        from papyra.persistence.redis import (
+        from papyra.persistence.backends.redis import (
             RedisConsumerGroupConfig,
             RedisStreamsConfig,
             RedisStreamsPersistence,

@@ -7,8 +7,8 @@ from sayer.testing import SayerTestClient
 
 from papyra import monkay
 from papyra.cli.app import app
-from papyra.persistence.memory import InMemoryPersistence
-from papyra.persistence.retention import RetentionPolicy
+from papyra.persistence.backends.memory import InMemoryPersistence
+from papyra.persistence.backends.retention import RetentionPolicy
 
 
 def parse_cli_output(output_string):
@@ -88,7 +88,7 @@ async def _redis_available(url: str) -> bool:
 @pytest.fixture
 async def redis_backend():
     try:
-        from papyra.persistence.redis import RedisStreamsConfig, RedisStreamsPersistence
+        from papyra.persistence.backends.redis import RedisStreamsConfig, RedisStreamsPersistence
     except Exception:
         pytest.skip("Redis backend not available (install papyra[redis])")
 

@@ -4,6 +4,7 @@ import uuid
 
 import pytest
 
+from papyra.persistence.backends.retention import RetentionPolicy
 from papyra.persistence.models import (
     PersistedAudit,
     PersistedDeadLetter,
@@ -12,7 +13,6 @@ from papyra.persistence.models import (
     PersistenceRecoveryConfig,
     PersistenceRecoveryMode,
 )
-from papyra.persistence.retention import RetentionPolicy
 from tests.conftest import _redis_available, _redis_url
 
 pytestmark = pytest.mark.anyio
@@ -79,7 +79,7 @@ async def test_redis_retention_max_records_applies_on_reads(tmp_path):
     If your RetentionPolicy does not expose it, we skip.
     """
     try:
-        from papyra.persistence.redis import RedisStreamsConfig, RedisStreamsPersistence
+        from papyra.persistence.backends.redis import RedisStreamsConfig, RedisStreamsPersistence
     except Exception:
         pytest.skip("Redis backend not available (install papyra[redis])")
 
@@ -170,7 +170,7 @@ async def test_redis_compaction_trims_when_max_records_supported(tmp_path):
     Redis compaction uses XTRIM only if retention.max_records exists.
     """
     try:
-        from papyra.persistence.redis import RedisStreamsConfig, RedisStreamsPersistence
+        from papyra.persistence.backends.redis import RedisStreamsConfig, RedisStreamsPersistence
     except Exception:
         pytest.skip("Redis backend not available (install papyra[redis])")
 

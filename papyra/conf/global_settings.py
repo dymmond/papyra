@@ -7,7 +7,7 @@ from types import UnionType
 from typing import TYPE_CHECKING, Annotated, Any, Union, get_args, get_origin, get_type_hints
 
 from papyra import __version__  # noqa
-from papyra.persistence.memory import InMemoryPersistence
+from papyra.persistence.backends.memory import InMemoryPersistence
 
 if TYPE_CHECKING:
     from papyra.logging import LoggingConfig  # noqa

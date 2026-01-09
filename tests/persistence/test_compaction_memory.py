@@ -1,7 +1,7 @@
 import pytest
 
 from papyra.address import ActorAddress
-from papyra.persistence.memory import InMemoryPersistence
+from papyra.persistence.backends.memory import InMemoryPersistence
 from papyra.persistence.models import PersistedEvent
 
 pytestmark = pytest.mark.anyio

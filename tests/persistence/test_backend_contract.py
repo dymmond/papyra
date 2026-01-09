@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import pytest
 
+from papyra.persistence.backends.memory import InMemoryPersistence
+from papyra.persistence.backends.rotating import RotatingFilePersistence
 from papyra.persistence.contract import (
     PersistenceBackendContract,
     backend_capabilities,
     safe_metrics_snapshot,
 )
 from papyra.persistence.json import JsonFilePersistence
-from papyra.persistence.memory import InMemoryPersistence
-from papyra.persistence.rotating import RotatingFilePersistence
 
 pytestmark = pytest.mark.anyio
 

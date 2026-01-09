@@ -9,10 +9,10 @@ from typing import Any
 import anyio
 import anyio.abc
 
-from ._retention import apply_retention
-from ._utils import _json_default, _pick_dataclass_fields
-from .base import PersistenceBackend
-from .models import (
+from papyra.persistence._retention import apply_retention
+from papyra.persistence._utils import _json_default, _pick_dataclass_fields
+from papyra.persistence.base import PersistenceBackend
+from papyra.persistence.models import (
     CompactionReport,
     PersistedAudit,
     PersistedDeadLetter,
@@ -24,6 +24,7 @@ from .models import (
     PersistenceRecoveryReport,
     PersistenceScanReport,
 )
+
 from .retention import RetentionPolicy
 
 

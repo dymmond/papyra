@@ -3,9 +3,9 @@ import json
 import pytest
 
 from papyra.address import ActorAddress
+from papyra.persistence.backends.retention import RetentionPolicy
+from papyra.persistence.backends.rotating import RotatingFilePersistence
 from papyra.persistence.models import PersistedEvent
-from papyra.persistence.retention import RetentionPolicy
-from papyra.persistence.rotating import RotatingFilePersistence
 
 pytestmark = pytest.mark.anyio
 

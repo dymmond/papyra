@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Any, Callable, TypeVar, cast
 import anyio
 import anyio.abc
 
+from papyra.persistence.backends.memory import InMemoryPersistence
+
 from ._envelope import STOP, ActorTerminated, DeadLetter, Envelope, Reply
 from .actor import Actor
 from .address import ActorAddress
@@ -25,7 +27,6 @@ from .exceptions import ActorStopped
 from .hooks import DefaultHooks, FailureInfo, SystemHooks
 from .mailbox import Mailbox
 from .persistence.base import PersistenceBackend
-from .persistence.memory import InMemoryPersistence
 from .persistence.models import (
     PersistedAudit,
     PersistedDeadLetter,

@@ -1,3 +1,5 @@
+from papyra.persistence.backends.memory import InMemoryPersistence
+
 from .contract import (
     PersistenceBackendCapabilities,
     PersistenceBackendContract,
@@ -5,7 +7,6 @@ from .contract import (
     safe_metrics_snapshot,
 )
 from .json import JsonFilePersistence
-from .memory import InMemoryPersistence
 
 __all__ = [
     "InMemoryPersistence",
@@ -17,7 +18,10 @@ __all__ = [
 ]
 
 try:  # pragma: no cover
-    from .redis import RedisStreamsConfig, RedisStreamsPersistence  # noqa: F401
+    from papyra.persistence.backends.redis import (
+        RedisStreamsConfig,
+        RedisStreamsPersistence,
+    )
 
     __all__ += [
         "RedisStreamsConfig",

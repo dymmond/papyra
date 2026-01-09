@@ -3,9 +3,9 @@ import json
 import pytest
 
 from papyra.address import ActorAddress
+from papyra.persistence.backends.retention import RetentionPolicy
 from papyra.persistence.json import JsonFilePersistence
 from papyra.persistence.models import PersistedEvent
-from papyra.persistence.retention import RetentionPolicy
 
 pytestmark = pytest.mark.anyio
 

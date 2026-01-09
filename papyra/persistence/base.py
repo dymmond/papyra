@@ -5,10 +5,10 @@ from typing import Any
 from papyra._envelope import DeadLetter
 from papyra.audit import AuditReport
 from papyra.events import ActorEvent
+from papyra.persistence.backends.retention import RetentionPolicy
 
 from .metrics import PersistenceMetricsMixin
 from .models import PersistenceScanReport
-from .retention import RetentionPolicy
 
 
 class PersistenceBackend(PersistenceMetricsMixin):
