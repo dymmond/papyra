@@ -1,6 +1,6 @@
 # Doctor CLI
 
-The **Doctor** command is a production‑grade diagnostic and recovery tool for Papyra’s
+The **Doctor** command is a production‑grade diagnostic and recovery tool for Papyra's
 persistence layer. It allows operators, CI pipelines, and deployment systems to **verify,
 fail fast, or recover persistence state** without starting an `ActorSystem`.
 

@@ -1,7 +1,7 @@
 # OpenTelemetry Integration
 
 Papyra is designed to integrate cleanly with **OpenTelemetry (OTel)** without forcing
-any specific observability stack or vendor. This page explains how Papyra’s metrics,
+any specific observability stack or vendor. This page explains how Papyra's metrics,
 traces, and lifecycle events map to OpenTelemetry concepts and how to wire them into
 real-world monitoring systems.
 

@@ -117,6 +117,9 @@ nav:
   - Retention Policy Reference: reference/retention-policy.md
   - CLI Exit Codes: reference/exit-codes.md
   - Glossary: reference/glossary.md
+- contributing.md
+- sponsorship.md
+- release-notes.md
 markdown_extensions:
 - attr_list
 - toc:

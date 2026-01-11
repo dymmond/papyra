@@ -14,19 +14,20 @@ understand your workload.
 Papyra follows three core performance principles:
 
 1. **Append-first, optimize later**
-   - Writes are sequential and durable
-   - Reads are filtered logically
-   - Physical optimization happens explicitly (compaction)
+    - Writes are sequential and durable
+    - Reads are filtered logically
+    - Physical optimization happens explicitly (compaction)
 
 2. **Bounded operations**
-   - All scans, reads, and inspections are capped
-   - No unbounded file reads or Redis ranges by default
+    - All scans, reads, and inspections are capped
+    - No unbounded file reads or Redis ranges by default
 
 3. **Visibility before speed**
-   - Metrics exist so you can see pressure *before* failure
-   - Slow behavior is observable, not silent
+    - Metrics exist so you can see pressure *before* failure
+    - Slow behavior is observable, not silent
 
 This means:
+
 - You will rarely see sudden performance cliffs
 - You *will* see metrics increase before problems occur
 
@@ -43,8 +44,7 @@ Write performance depends on:
 - Flush / fsync behavior (file backends)
 - Network latency (Redis)
 
-**Good news:**
-Writes are append-only and never require reads.
+**Good news:** Writes are append-only and never require reads.
 
 ### 2. Read Amplification
 
@@ -54,8 +54,7 @@ Reads are affected by:
 - Limit / since usage
 - Backend scan cost
 
-**Rule of thumb**
-If you read frequently, **always use `limit` or `since`**.
+**Rule of thumb** If you read frequently, **always use `limit` or `since`**.
 
 ---
 
@@ -68,11 +67,13 @@ If you read frequently, **always use `limit` or `since`**.
 - No persistence guarantees
 
 **Use for**
+
 - Tests
 - Short-lived systems
 - Benchmarks
 
 **Avoid**
+
 - Long-running production systems
 
 ---
@@ -84,10 +85,12 @@ If you read frequently, **always use `limit` or `since`**.
 - Predictable IO behavior
 
 **Costs**
+
 - Full-file scans during reads
 - Compaction required to reclaim space
 
 **Tuning**
+
 - Use retention aggressively
 - Schedule compaction during low activity
 - Avoid frequent full reads
@@ -101,10 +104,12 @@ If you read frequently, **always use `limit` or `since`**.
 - Faster scans than monolithic files
 
 **Recommended for**
+
 - Long-running systems
 - Moderate to high write volume
 
 **Key knobs**
+
 - Rotation size
 - Retention window
 - Compaction cadence
@@ -118,15 +123,18 @@ If you read frequently, **always use `limit` or `since`**.
 - Built-in trimming support
 
 **Strengths**
+
 - High throughput
 - Consumer groups
 - Horizontal scalability
 
 **Costs**
+
 - Network latency
 - Redis memory pressure
 
 **Best practices**
+
 - Enable approximate trimming
 - Use consumer groups for external tools
 - Monitor pending entries
@@ -140,6 +148,7 @@ Retention directly impacts performance.
 ### Logical Retention
 
 Applied at read time:
+
 - Cheap
 - Safe
 - Does not reclaim disk
@@ -151,6 +160,7 @@ Applied at read time:
 - More expensive
 
 **Guideline**
+
 > Use logical retention always.
 > Use compaction periodically.
 
@@ -161,10 +171,12 @@ Applied at read time:
 Startup and health scans are intentionally **sampled**.
 
 Controlled by:
+
 - `scan_sample_size`
 - Backend implementation
 
 This guarantees:
+
 - Startup does not degrade with data size
 - Corruption is detected probabilistically, not exhaustively
 
@@ -196,11 +208,11 @@ Key metrics to watch:
 
 ## What *Not* To Do
 
-❌ Disable scans
-❌ Remove retention
-❌ Run compaction continuously
-❌ Read entire history repeatedly
-❌ Ignore metrics
+- ❌ Disable scans
+- ❌ Remove retention
+- ❌ Run compaction continuously
+- ❌ Read entire history repeatedly
+- ❌ Ignore metrics
 
 These actions usually hide problems rather than solve them.
 
@@ -238,10 +250,3 @@ If you remember one thing:
 > **If performance matters, metrics come first.**
 
 Only tune what you can observe.
-
----
-
-Next:
-- [Retention Strategies](retention-strategies.md)
-- [Compaction Strategies](compaction-strategies.md)
-- [Failure Scenarios](failure-scenarios.md)

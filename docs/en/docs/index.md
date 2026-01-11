@@ -1,5 +1,37 @@
 # Papyra
 
+<p align="center">
+  <a href="https://papyra.dymmond.com"><img src="https://res.cloudinary.com/dymmond/image/upload/v1768157736/Papyra/logo_nru9tf.png" alt='Papyra'></a>
+</p>
+
+<p align="center">
+    <em>Durable persistence, retention and compaction for actor systems</em>
+</p>
+
+<p align="center">
+<a href="https://github.com/dymmond/papyra/actions/workflows/test-suite.yml/badge.svg?event=push&branch=main" target="_blank">
+    <img src="https://github.com/dymmond/papyra/actions/workflows/test-suite.yml/badge.svg?event=push&branch=main" alt="Test Suite">
+</a>
+
+<a href="https://pypi.org/project/papyra" target="_blank">
+    <img src="https://img.shields.io/pypi/v/papyra?color=%2334D058&label=pypi%20package" alt="Package version">
+</a>
+
+<a href="https://pypi.org/project/papyra" target="_blank">
+    <img src="https://img.shields.io/pypi/pyversions/papyra.svg?color=%2334D058" alt="Supported Python versions">
+</a>
+</p>
+
+---
+
+**Documentation**: [https://papyra.dymmond.com](https://papyra.dymmond.com) 📚
+
+**Source Code**: [https://github.com/dymmond/papyra](https://github.com/dymmond/papyra)
+
+**The official supported version is always the latest released**.
+
+---
+
 **Durable persistence, retention, recovery, and observability for async actor systems.**
 
 Papyra is a persistence and operational tooling layer designed for **long-running, event-driven systems**.

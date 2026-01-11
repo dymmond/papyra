@@ -1,6 +1,6 @@
 # Persistence CLI
 
-The `persistence` command group provides **direct operational control** over Papyra’s
+The `persistence` command group provides **direct operational control** over Papyra's
 persistence layer. These commands are designed for operators, SREs, and advanced users
 who need to **inspect, validate, repair, or maintain** persisted actor data outside of
 normal runtime execution.

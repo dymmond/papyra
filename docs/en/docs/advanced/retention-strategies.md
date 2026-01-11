@@ -211,7 +211,7 @@ This is often the best “production default.”
 
 ### Strategy 4: Cold storage + short hot retention
 
-If you want long-term history without keeping it in Papyra’s primary persistence:
+If you want long-term history without keeping it in Papyra's primary persistence:
 
 - keep a short retention window in Papyra (hot data)
 - ship the stream elsewhere (cold data)
@@ -294,11 +294,11 @@ Compact when:
 - you have predictable low-traffic windows
 - you want to physically enforce retention for compliance
 
-Don’t compact when:
+Don't compact when:
 
-- you don’t need disk reclamation yet
+- you don't need disk reclamation yet
 - your storage backend already enforces a size bound (e.g., Redis trimming)
-- you can’t tolerate any rewrite pressure during peak time
+- you can't tolerate any rewrite pressure during peak time
 
 ### How to verify retention is doing what you think
 

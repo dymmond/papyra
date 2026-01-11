@@ -170,7 +170,7 @@ The CLI is considered a **stable external contract**.
 
 ## Health Checks & Supervisory Systems
 
-External systems (Kubernetes, Nomad, systemd, etc.) can rely on Papyra’s health checks:
+External systems (Kubernetes, Nomad, systemd, etc.) can rely on Papyra's health checks:
 
 - Startup checks
 - Doctor mode

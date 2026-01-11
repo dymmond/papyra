@@ -54,7 +54,7 @@ Papyra persistence is **append-only** and treated as **observability**, not as p
 
 **What happens**
 
-- The actor’s exception is routed through supervision.
+- The actor's exception is routed through supervision.
 - If the message was sent via request-reply (`ask` style), the caller receives the error.
 
 **What to do**
@@ -278,7 +278,7 @@ papyra persistence compact --path ./events.ndjson
 **What happens**
 
 - Writes are best-effort.
-- If exceptions propagate from your backend implementation, they may be suppressed by the actor system’s persistence scheduling.
+- If exceptions propagate from your backend implementation, they may be suppressed by the actor system's persistence scheduling.
 
 **What to do**
 
@@ -316,7 +316,7 @@ papyra doctor run --mode recover --recovery-mode quarantine --quarantine-dir ./q
 
 ### Scenario K: Consumer group processing crashes
 
-This affects external tools consuming streams (shipping/analytics), not the actor system’s writes.
+This affects external tools consuming streams (shipping/analytics), not the actor system's writes.
 
 **Symptom**
 
@@ -388,7 +388,7 @@ In production, you typically want one of these:
 
 For local/dev:
 
-- **ignore**: fastest; don’t block iteration.
+- **ignore**: fastest; don't block iteration.
 
 ---
 

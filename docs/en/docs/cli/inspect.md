@@ -1,7 +1,7 @@
 # `papyra inspect`
 
 The `inspect` command group lets you **read** what the persistence backend has recorded.
-It’s meant for **humans** (operators, SREs, developers) who want to understand what happened in a
+It's meant for **humans** (operators, SREs, developers) who want to understand what happened in a
 system run: lifecycle events, audit snapshots, and dead letters.
 
 Important properties:
@@ -218,7 +218,7 @@ If you need correctness guarantees (e.g. detect truncated JSON lines), use:
 ### `--since` is a float timestamp
 
 The CLI passes `since` through to the backend as a float timestamp.
-In most cases you’ll use Unix epoch seconds (possibly with decimals).
+In most cases you'll use Unix epoch seconds (possibly with decimals).
 
 ### Filtering is client-side for some options
 
