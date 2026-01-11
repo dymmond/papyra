@@ -5,6 +5,7 @@ from typing import Any
 import anyio
 import anyio.abc
 
+from papyra.persistence.backends.retention import RetentionPolicy
 from papyra.persistence.base import PersistenceBackend
 from papyra.persistence.models import (
     PersistedAudit,
@@ -47,8 +48,8 @@ class InMemoryPersistence(PersistenceBackend):
         silent no-ops.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, retention_policy: RetentionPolicy | None = None) -> None:
+        super().__init__(retention_policy=retention_policy)
         self._lock: anyio.abc.Lock = anyio.Lock()
 
         self._events: list[PersistedEvent] = []

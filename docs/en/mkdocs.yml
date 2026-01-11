@@ -80,6 +80,7 @@ nav:
   - Persistence Backends:
     - JSON File Backend: persistence/json-backend.md
     - Redis Streams Backend: persistence/redis-backend.md
+    - Rotation Backend: persistence/rotation-backend.md
     - Memory Backend: persistence/memory-backend.md
   - Retention & Compaction: persistence/retention-and-compaction.md
   - Health & Doctor CLI: persistence/health-and-doctor.md
