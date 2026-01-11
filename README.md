@@ -249,9 +249,3 @@ The full documentation covers:
 - Startup guarantees
 - Metrics + OpenTelemetry integration
 - Extending Papyra with custom backends
-
----
-
-## License
-
-MIT © Dymmond
