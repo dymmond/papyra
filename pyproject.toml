@@ -42,11 +42,11 @@ dependencies = ["anyio>=4.12.0", "sayer>=0.7.5"]
 keywords = ["papyra"]
 
 [project.urls]
-Homepage = "https://github.com/tarsil/papyra"
-Documentation = "https://papyra.tarsild.io"
-Changelog = "https://papyra.tarsild.io/release-notes/"
+Homepage = "https://github.com/dymmond/papyra"
+Documentation = "https://papyra.dymmond.com"
+Changelog = "https://papyra.dymmond.com/release-notes/"
 Funding = "https://github.com/sponsors/tarsil"
-Source = "https://github.com/tarsil/papyra"
+Source = "https://github.com/dymmond/papyra"
 
 [tool.hatch.version]
 path = "papyra/__init__.py"

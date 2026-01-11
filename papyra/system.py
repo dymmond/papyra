@@ -235,6 +235,22 @@ class ActorSystem:
         self._persistence_recovery = persistence_recovery
         self._persistence_startup = persistence_startup
 
+    @property
+    def persistence(self) -> PersistenceBackend | None:
+        """
+        Retrieve the active persistence backend instance.
+
+        This property provides access to the storage layer responsible for persisting
+        system events, audit logs, and dead letters. It allows other components
+        (such as the actor context or diagnostics tools) to interact with the
+        underlying storage.
+
+        Returns:
+            PersistenceBackend | None: The configured persistence backend, or None
+                if persistence is disabled for this system.
+        """
+        return self._persistence
+
     def events(self) -> tuple[ActorEvent, ...]:
         """
         Retrieve a chronological snapshot of all lifecycle events recorded by the system.

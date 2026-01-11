@@ -2,16 +2,13 @@
 
 Do you like **Papyra** and would like to help Papyra, other user and the author?
 
-## 🐦 Follow Papyra on Twitter
-
-
 ## ⭐ Star **Papyra** on GitHub
 
 Giving a star to Papyra is very simple and helps promoting the work across the developers around the world.
 
 The button is located at the top right.
 
-[https://github.com/tarsil/papyra](https://github.com/tarsil/papyra).
+[https://github.com/dymmond/papyra](https://github.com/dymmond/papyra).
 
 This will help spreading the word about the tool and how helpful has been.
 
@@ -21,8 +18,6 @@ Following the GitHub repo will allow you to "watch" for any new release of Papyr
 
 You can click on "***watch***" and select "***custom***" -> "***Releases***"or any other you may find particular
 interesting to you.
-
-## 💬 Join the official Papyra discord channel
 
 ## 🔥 Sponsor the author
 

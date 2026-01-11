@@ -1,72 +1,141 @@
 site_name: Papyra
-site_description: The async actor model you didn't know you needed.
-site_url: https://papyra.tarsild.io
-
+site_description: Durable persistence, retention and compaction for actor systems
+site_url: https://papyra.dymmond.com
 theme:
-  name: "material"
+  name: material
   language: en
   palette:
-    - scheme: "default"
-      primary: "purple"
-      accent: "amber"
-      media: "(prefers-color-scheme: light)"
-      toggle:
-            icon: "material/lightbulb"
-            name: "Switch to dark mode"
-    - scheme: "slate"
-      media: "(prefers-color-scheme: dark)"
-      primary: "purple"
-      accent: "amber"
-      toggle:
-            icon: "material/lightbulb-outline"
-            name: "Switch to light mode"
+  - scheme: default
+    primary: light blue
+    accent: amber
+    media: '(prefers-color-scheme: light)'
+    toggle:
+      icon: material/lightbulb
+      name: Switch to dark mode
+  - scheme: slate
+    media: '(prefers-color-scheme: dark)'
+    primary: light blue
+    accent: amber
+    toggle:
+      icon: material/lightbulb-outline
+      name: Switch to light mode
   favicon: statics/images/favicon.ico
-  logo: statics/images/logo-white.svg
+  logo: statics/images/white.png
   features:
-    - search.suggest
-    - search.highlight
-    - content.tabs.link
-    - content.code.copy
-
-repo_name: tarsil/papyra
-repo_url: https://github.com/tarsil/papyra
-edit_uri: ""
+  - search.suggest
+  - search.highlight
+  - content.tabs.link
+  - content.code.copy
+  - content.code.annotate
+  - content.tooltips
+  - content.code.select
+  - navigation.indexes
+  - navigation.path
+  - navigation.tabs
+repo_name: dymmond/papyra
+repo_url: https://github.com/dymmond/papyra
+edit_uri: ''
 plugins:
-  - search
-  - meta-descriptions:
-      export_csv: false
-      quiet: false
-      enable_checks: false
-      min_length: 50
-      max_length: 160
-      trim: false
-
+- search
+- meta-descriptions:
+    export_csv: false
+    quiet: false
+    enable_checks: false
+    min_length: 50
+    max_length: 160
+    trim: false
+- mkdocstrings:
+    handlers:
+      python:
+        options:
+          extensions:
+          - griffe_typingdoc
+          show_root_heading: true
+          show_if_no_docstring: true
+          preload_modules:
+          - httpx
+          - a2wsgi
+          inherited_members: true
+          members_order: source
+          separate_signature: true
+          unwrap_annotated: true
+          filters:
+          - '!^_'
+          merge_init_into_class: true
+          docstring_section_style: spacy
+          signature_crossrefs: true
+          show_symbol_type_heading: true
+          show_symbol_type_toc: true
 nav:
-  - Introduction: "index.md"
-  - Contributing: "contributing.md"
-  - Sponsorship: "sponsorship.md"
-  - Release Notes: "release-notes.md"
+- Introduction:
+  - Overview: index.md
+  - Why Papyra Exists: introduction/why-papyra.md
+  - Core Concepts: introduction/core-concepts.md
+- Getting Started:
+  - Installation: getting-started/installation.md
+  - Quick Start: getting-started/quickstart.md
+  - Minimal Example: getting-started/minimal-example.md
+- Persistence:
+  - Persistence Overview: persistence/overview.md
+  - Persistence Backends:
+    - JSON File Backend: persistence/json-backend.md
+    - Redis Streams Backend: persistence/redis-backend.md
+    - Rotation Backend: persistence/rotation-backend.md
+    - Memory Backend: persistence/memory-backend.md
+  - Retention & Compaction: persistence/retention-and-compaction.md
+  - Health & Doctor CLI: persistence/health-and-doctor.md
+  - Startup Behavior: persistence/startup-checks.md
+- Metrics & Observability:
+  - Metrics Overview: metrics/overview.md
+  - Persistence Metrics: metrics/persistence-metrics.md
+  - CLI Metrics Commands: metrics/cli.md
+  - OpenTelemetry Integration: metrics/opentelemetry.md
+  - External Monitoring: metrics/external-tools.md
+- CLI Reference:
+  - CLI Overview: cli/overview.md
+  - Persistence Commands: cli/persistence.md
+  - Doctor Command: cli/doctor.md
+  - Inspect Command: cli/inspect.md
+  - Metrics Command: cli/metrics.md
+- Advanced Topics:
+  - Retention Strategies: advanced/retention-strategies.md
+  - Compaction Strategies: advanced/compaction-strategies.md
+  - Redis Consumer Groups: advanced/redis-consumer-groups.md
+  - Failure Scenarios: advanced/failure-scenarios.md
+  - Performance Characteristics: advanced/performance.md
+- Deployment & Operations:
+  - Production Checklist: operations/production-checklist.md
+  - Scheduling Compaction: operations/compaction-scheduling.md
+  - Backups & Recovery: operations/backups-and-recovery.md
+  - CI/CD Integration: operations/ci-cd.md
+- Extending Papyra:
+  - Backend Contract: extending/backend-contract.md
+  - Writing a Custom Backend: extending/custom-backend.md
+  - Metrics Extensions: extending/metrics.md
+- Reference:
+  - Configuration Reference: reference/configuration.md
+  - Retention Policy Reference: reference/retention-policy.md
+  - CLI Exit Codes: reference/exit-codes.md
+  - Glossary: reference/glossary.md
+- contributing.md
+- sponsorship.md
+- release-notes.md
 markdown_extensions:
-  - toc:
-      permalink: true
-  - mdx_include:
-      base_path: docs
-  - admonition
-  - extra
-  - pymdownx.superfences:
-      custom_fences:
-        - name: mermaid
-          class: mermaid
-          format: !!python/name:pymdownx.superfences.fence_code_format ""
-  - pymdownx.tabbed:
-      alternate_style: true
-  - attr_list
-  - md_in_html
-
+- attr_list
+- toc:
+    permalink: true
+- mdx_include:
+    base_path: docs/
+- admonition
+- extra
+- pymdownx.superfences
+- pymdownx.tabbed:
+    alternate_style: true
+- pymdownx.highlight
+- md_in_html
 extra:
   alternate:
-    - link: /
-      name: English
-      lang: en
+  - link: /
+    name: en - English
 hooks:
 - ../../scripts/hooks.py
