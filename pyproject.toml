@@ -70,7 +70,6 @@ testing = [
     "ipdb",
     "ravyn",
     "fastapi",
-    "litestar",
 ]
 
 redis = ["redis>=7.1.0"]

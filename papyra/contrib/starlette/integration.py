@@ -4,7 +4,7 @@ import contextlib
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from ravyn import Include, Ravyn
+from starlette.applications import Starlette
 
 from papyra.contrib.asgi.endpoints import healthz as asgi_health, metrics as asgi_metrics
 from papyra.contrib.asgi.lifesycle import papyra_lifecycle
@@ -13,9 +13,9 @@ from papyra.system import ActorSystem
 
 
 @dataclass(slots=True)
-class RavynPapyra:
+class StarlettePapyra:
     """
-    Small integration helper for Ravyn
+    Small integration helper for Starlette
 
     It is possible to use:
         - Use `lifespan()`.
@@ -27,8 +27,7 @@ class RavynPapyra:
 
     async def lifespan(self) -> Any:
         """
-        Get a lifespan context manager for
-        Ravyn applications.
+        Get a lifespan context manager for Starlette applications.
 
         Returns:
             A context manager that manages the lifecycle of the ActorSystem.
@@ -39,12 +38,12 @@ class RavynPapyra:
             persistence_recovery=self.config.persistence_recovery,
         )
 
-    def install(self, app: Ravyn) -> None:
+    def install(self, app: Starlette) -> None:
         """
-        Install the Papyra lifecycle events into a Ravyn application.
+        Install the Papyra lifecycle events into a Starlette application.
 
         Args:
-            app: The Ravyn application instance.
+            app: The Starlette application instance.
         """
         system = self.system_factory()
 
@@ -63,9 +62,9 @@ class RavynPapyra:
             await system.aclose()
 
         if hasattr(app, "on_startup"):
-            app.router.on_startup.append(_startup)
+            app.on_startup.append(_startup)
         if hasattr(app, "on_shutdown"):
-            app.router.on_shutdown.append(_shutdown)
+            app.on_shutdown.append(_shutdown)
 
         async def _health(scope: Any, receive: Any, send: Any) -> None:
             return await asgi_health(
@@ -86,12 +85,12 @@ class RavynPapyra:
                 format=self.config.metrics_format,
             )
 
-        if hasattr(app, "add_include"):
-            app.add_include(Include(self.config.health_path, app=_health))
-            app.add_include(Include(self.config.metrics_path, app=_metrics))
+        if hasattr(app, "mount"):
+            app.mount(self.config.health_path, _health)
+            app.mount(self.config.metrics_path, _metrics)
             return
 
         raise RuntimeError(
-            "Could not auto-install Papyra endpoints into the Ravyn app. "
-            "Include `healthz` and `metrics` ASGI callables manually."
+            "Could not auto-install Papyra endpoints into the Starlette app. "
+            "mount `healthz` and `metrics` ASGI callables manually."
         )

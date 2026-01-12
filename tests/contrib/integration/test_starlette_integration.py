@@ -1,0 +1,40 @@
+from __future__ import annotations
+
+import pytest
+from starlette.applications import Starlette
+from starlette.testclient import TestClient
+
+from papyra.contrib.starlette import StarlettePapyra
+from papyra.persistence.backends.memory import InMemoryPersistence
+from papyra.system import ActorSystem
+
+pytestmark = pytest.mark.anyio
+
+
+def test_starlette_endpoints_healthz_and_metrics():
+    persistence = InMemoryPersistence()
+
+    def make_system() -> ActorSystem:
+        system = ActorSystem(
+            persistence=persistence,
+        )
+        return system
+
+    integ = StarlettePapyra(make_system)
+
+    app = Starlette()
+    integ.install(app)
+
+    client = TestClient(app)
+
+    response = client.get("/healthz")
+    assert response.status_code == 200
+    assert response.json()["mode"] == "scan"
+
+    response = client.get("/metrics")
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert "records_written" in data
+    assert "write_errors" in data

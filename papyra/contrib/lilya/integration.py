@@ -4,6 +4,8 @@ import contextlib
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from lilya.apps import Lilya
+
 from papyra.contrib.asgi.endpoints import healthz as asgi_health, metrics as asgi_metrics
 from papyra.contrib.asgi.lifesycle import papyra_lifecycle
 from papyra.contrib.asgi.types import PapyraASGIConfig
@@ -36,7 +38,7 @@ class LilyaPapyra:
             persistence_recovery=self.config.persistence_recovery,
         )
 
-    def install(self, app: Any) -> None:
+    def install(self, app: Lilya) -> None:
         """
         Install the Papyra lifecycle events into a Lilya application.
 
@@ -83,9 +85,10 @@ class LilyaPapyra:
                 format=self.config.metrics_format,
             )
 
-        # Add the routes to the app
-        app.add_route(self.config.health_path, _health, methods=["GET"])
-        app.add_route(self.config.metrics_path, _metrics, methods=["GET"])
+        if hasattr(app, "include"):
+            app.include(self.config.health_path, _health)
+            app.include(self.config.metrics_path, _metrics)
+            return
 
         raise RuntimeError(
             "Could not auto-install Papyra endpoints into the Lilya app. "
