@@ -11,7 +11,7 @@ from papyra.system import ActorSystem
 pytestmark = pytest.mark.anyio
 
 
-def test_starlette_endpoints_healthz_and_metrics():
+def test_fastapi_endpoints_healthz_and_metrics():
     persistence = InMemoryPersistence()
 
     def make_system() -> ActorSystem:
