@@ -153,7 +153,7 @@ class CompactionReport:
         return self.before_bytes - self.after_bytes
 
 
-class PersistenceAnomalyType(Enum):
+class PersistenceAnomalyType(str, Enum):
     """
     Classification of persistence-level anomalies detected during startup scans.
     """

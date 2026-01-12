@@ -26,8 +26,8 @@ def _base_response(
     media = f"{media_type}; charset=utf-8"
     body = serializer.dumps(payload).encode("utf-8")
     headers = [
-        (b"Content-Type", media.encode("ascii")),
-        (b"Content-Length", str(len(body)).encode("ascii")),
+        (b"content-type", media.encode("ascii")),
+        (b"content-length", str(len(body)).encode("ascii")),
     ]
     return status, headers, body
 
@@ -169,7 +169,6 @@ async def metrics(
         return
 
     backend = system.persistence
-
     snap: Mapping[str, Any] | None = None
 
     try:
@@ -179,7 +178,7 @@ async def metrics(
     except Exception:
         snap = None
 
-    if format == "json":
+    if format == "text":
         if snap is None:
             code, headers, body = _text_response(200, "metrics: <unavailable>")
         else:
@@ -189,7 +188,7 @@ async def metrics(
 
             code, headers, body = _text_response(200, "\n".join(lines))
     else:
-        code, headers, body = _text_response(200, dict(snap or {}))
+        code, headers, body = _json_response(200, dict(snap or {}))
 
     await send(
         {
