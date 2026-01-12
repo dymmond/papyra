@@ -1,0 +1,96 @@
+from __future__ import annotations
+
+import contextlib
+from dataclasses import dataclass
+from typing import Any, Callable
+
+from fastapi import FastAPI
+
+from papyra.contrib.asgi.endpoints import healthz as asgi_health, metrics as asgi_metrics
+from papyra.contrib.asgi.lifesycle import papyra_lifecycle
+from papyra.contrib.asgi.types import PapyraASGIConfig
+from papyra.system import ActorSystem
+
+
+@dataclass(slots=True)
+class FastAPIPapyra:
+    """
+    Small integration helper for FastAPI
+
+    It is possible to use:
+        - Use `lifespan()`.
+        - Call `install(app, ... )` to register startup/shutdown events + routes.
+    """
+
+    system_factory: Callable[[], ActorSystem]
+    config: PapyraASGIConfig = PapyraASGIConfig()
+
+    async def lifespan(self) -> Any:
+        """
+        Get a lifespan context manager for FastAPI applications.
+
+        Returns:
+            A context manager that manages the lifecycle of the ActorSystem.
+        """
+        return await papyra_lifecycle(  # type: ignore[misc]
+            system_factory=self.system_factory,
+            persistence_startup=self.config.persistence_startup,
+            persistence_recovery=self.config.persistence_recovery,
+        )
+
+    def install(self, app: FastAPI) -> None:
+        """
+        Install the Papyra lifecycle events into a FastAPI application.
+
+        Args:
+            app: The FastAPI application instance.
+        """
+        system = self.system_factory()
+
+        async def _startup() -> None:
+            if self.config.persistence_startup is not None:
+                with contextlib.suppress(Exception):
+                    system.persistence_startup = self.config.persistence_startup
+
+            if self.config.persistence_recovery is not None:
+                with contextlib.suppress(Exception):
+                    await system.persistence.recover(self.config.persistence_recovery)
+
+            await system.start()
+
+        async def _shutdown() -> None:
+            await system.aclose()
+
+        if hasattr(app, "on_startup"):
+            app.on_startup.append(_startup)
+        if hasattr(app, "on_shutdown"):
+            app.on_shutdown.append(_shutdown)
+
+        async def _health(scope: Any, receive: Any, send: Any) -> None:
+            return await asgi_health(
+                scope=scope,
+                receive=receive,
+                send=send,
+                system=system,
+                mode=self.config.health_mode,
+                startup_config=self.config.persistence_startup,
+            )
+
+        async def _metrics(scope: Any, receive: Any, send: Any) -> None:
+            return await asgi_metrics(
+                scope=scope,
+                receive=receive,
+                send=send,
+                system=system,
+                format=self.config.metrics_format,
+            )
+
+        if hasattr(app, "mount"):
+            app.mount(self.config.health_path, _health)
+            app.mount(self.config.metrics_path, _metrics)
+            return
+
+        raise RuntimeError(
+            "Could not auto-install Papyra endpoints into the FastAPI app. "
+            "mount `healthz` and `metrics` ASGI callables manually."
+        )

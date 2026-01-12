@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Union, get_args, get_origin, g
 
 from papyra import __version__  # noqa
 from papyra.persistence.backends.memory import InMemoryPersistence
+from papyra.serializers import SerializerConfig, StandardSerializerConfig
 
 if TYPE_CHECKING:
     from papyra.logging import LoggingConfig  # noqa
@@ -254,18 +255,22 @@ class Settings(BaseSettings):
         return StandardLoggingConfig(level=self.logging_level)
 
     @property
-    def dashboard_config(self) -> Any:
+    def serializer_config(self) -> SerializerConfig | None:  # noqa
         """
-        Retrieves the default configuration settings for the Asyncz management dashboard.
+        An instance of [SerializerConfig](https://papyra.dymmond.com/serialization/).
 
-        This property dynamically imports and returns an instance of the `DashboardConfig`
-        class, providing access to settings like the authentication backend, template
-        directory, and static files location.
+        Default:
+            StandardSerializerConfig()
 
-        Returns:
-            An instance of `DashboardConfig`.
-        """
-        ...
-        # from asyncz.contrib.dashboard.config import DashboardConfig
-        #
-        # return DashboardConfig(secret_key=self.secret_key)
+        **Example**
+
+        ```python
+        from papyra import Settings
+        from papyra.serializers import StandardSerializerConfig, SerializerConfig
+
+
+        class AppSettings(Settings):
+            @property
+            def serializer_config(self) -> SerializerConfig:
+                return StandardSerializerConfig()"""
+        return StandardSerializerConfig()
