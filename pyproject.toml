@@ -8,9 +8,7 @@ description = "The async actor model you didn't know you needed"
 readme = "README.md"
 requires-python = ">=3.10"
 dynamic = ['version']
-authors = [
-    { name = "Tiago Silva", email = "tiago@tarsild.io" },
-]
+authors = [{ name = "Tiago Silva", email = "tiago@tarsild.io" }]
 classifiers = [
     "Intended Audience :: Information Technology",
     "Intended Audience :: System Administrators",
@@ -70,6 +68,9 @@ testing = [
     "pytest>=7.2.2,<9.0.0",
     "pytest-cov>=4.0.0,<5.0.0",
     "ipdb",
+    "ravyn",
+    "fastapi",
+    "litestar",
 ]
 
 redis = ["redis>=7.1.0"]

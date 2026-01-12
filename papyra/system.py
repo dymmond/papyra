@@ -251,6 +251,69 @@ class ActorSystem:
         """
         return self._persistence
 
+    @property
+    def persistence_startup(self) -> PersistenceStartupConfig | None:
+        """
+        Retrieve the persistence startup configuration.
+
+        This property exposes the configuration settings that dictate how the
+        actor system should handle persistence during its startup sequence,
+        including scanning for anomalies and recovery strategies.
+
+        Returns:
+            PersistenceStartupConfig | None: The configured startup settings, or None
+                if no specific configuration was provided.
+        """
+        return self._persistence_startup
+
+    @persistence_startup.setter
+    def persistence_startup(self, config: PersistenceStartupConfig | None) -> None:
+        """
+        Set the persistence startup configuration.
+
+        This setter allows updating the configuration that governs how the
+        actor system manages persistence during its startup phase. It enables
+        dynamic adjustment of startup behavior, such as changing recovery modes
+        or scan strategies.
+
+        Parameters:
+            config (PersistenceStartupConfig | None): The new startup configuration
+                to apply, or None to disable specific startup handling.
+        """
+        self._persistence_startup = config
+
+    @property
+    def persistance_recovery(self) -> PersistenceRecoveryConfig | None:
+        """
+        Retrieve the persistence recovery configuration.
+
+        This property provides access to the settings that define how the
+        actor system should perform recovery operations from persisted data.
+        It includes strategies for handling inconsistencies and restoring
+        actor state.
+
+        Returns:
+            PersistenceRecoveryConfig | None: The configured recovery settings, or None
+                if no specific configuration was provided.
+        """
+        return self._persistence_recovery
+
+    @persistance_recovery.setter
+    def persistance_recovery(self, config: PersistenceRecoveryConfig | None) -> None:
+        """
+        Set the persistence recovery configuration.
+
+        This setter allows updating the configuration that dictates how the
+        actor system performs recovery from persisted state. It enables
+        dynamic modification of recovery strategies and behaviors.
+
+        Parameters:
+            config (PersistenceRecoveryConfig | None): The new recovery
+                configuration to apply, or None to disable specific recovery handling.
+        self._persistence_recovery = config
+        """
+        self._persistence_recovery = config
+
     def events(self) -> tuple[ActorEvent, ...]:
         """
         Retrieve a chronological snapshot of all lifecycle events recorded by the system.
