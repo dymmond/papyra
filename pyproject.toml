@@ -37,7 +37,15 @@ classifiers = [
     "Topic :: Internet :: WWW/HTTP",
 ]
 dependencies = ["anyio>=4.12.0", "sayer>=0.7.5"]
-keywords = ["papyra"]
+keywords = [
+  "papyra",
+  "actor",
+  "actor-system",
+  "async",
+  "concurrency",
+  "distributed-systems",
+  "asgi",
+]
 
 [project.urls]
 Homepage = "https://github.com/dymmond/papyra"
