@@ -31,7 +31,7 @@ theme:
   - content.code.select
   - navigation.indexes
   - navigation.path
-  - navigation.tabs
+#  - navigation.tabs
 repo_name: dymmond/papyra
 repo_url: https://github.com/dymmond/papyra
 edit_uri: ''
@@ -75,6 +75,7 @@ nav:
   - Installation: getting-started/installation.md
   - Quick Start: getting-started/quickstart.md
   - Minimal Example: getting-started/minimal-example.md
+  - Settings: getting-started/settings.md
   - Integrations & ASGI: contrib/integration.md
 - Persistence:
   - Persistence Overview: persistence/overview.md
