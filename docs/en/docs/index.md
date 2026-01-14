@@ -1,7 +1,7 @@
 # Papyra
 
 <p align="center">
-  <a href="https://papyra.dymmond.com"><img src="https://res.cloudinary.com/dymmond/image/upload/v1768157736/Papyra/logo_nru9tf.png" alt='Papyra'></a>
+  <a href="https://papyra.dymmond.com"><img src="https://res.cloudinary.com/dymmond/image/upload/v1768380322/Papyra/logo_wgunlg.png" alt='Papyra'></a>
 </p>
 
 <p align="center">
