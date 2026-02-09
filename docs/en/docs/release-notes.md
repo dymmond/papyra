@@ -6,6 +6,8 @@
 
 - When using the settings it was causing a conflict with the types and not casting properly to the right type due
 to the `from future import __annotations__`.
+- Settings inheritance now preserves typed fields from parent classes when type hint resolution falls back,
+allowing child settings classes to override inherited values without re-annotating fields.
 
 ## 0.1.0
 
