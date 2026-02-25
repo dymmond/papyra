@@ -183,5 +183,10 @@ addopts = ["--strict-config", "--strict-markers"]
 xfail_strict = true
 junit_family = "xunit2"
 
+[dependency-groups]
+dev = [
+    "pytest-codspeed>=4.3.0",
+]
+
 [tool.hatch.build.targets.sdist]
 include = ["/papyra"]

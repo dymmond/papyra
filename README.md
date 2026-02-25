@@ -20,6 +20,10 @@
 <a href="https://pypi.org/project/papyra" target="_blank">
     <img src="https://img.shields.io/pypi/pyversions/papyra.svg?color=%2334D058" alt="Supported Python versions">
 </a>
+
+<a href="https://codspeed.io/dymmond/papyra?utm_source=badge" target="_blank">
+    <img src="https://img.shields.io/endpoint?url=https://codspeed.io/badge/dymmond/papyra" alt="CodSpeed">
+</a>
 </p>
 
 ---
@@ -48,7 +52,7 @@ It provides **durable system history**, **audits**, **dead-letter tracking**, **
 Actor systems are excellent at concurrency and fault isolation, but production operators eventually need:
 
 - A durable history of lifecycle events (start/stop/crash/restart)
-- Audit snapshots for “what's running and what's broken?”
+- Audit snapshots for "what's running and what's broken?"
 - Dead letters for undeliverable messages
 - Retention to prevent unbounded growth
 - Compaction to physically reclaim disk space
