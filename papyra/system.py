@@ -26,6 +26,7 @@ from .events import (
 from .exceptions import ActorStopped
 from .hooks import DefaultHooks, FailureInfo, SystemHooks
 from .mailbox import Mailbox
+from .messages import AttrPath, ProxyCall, ProxyGetAttr, ProxySetAttr
 from .persistence.base import PersistenceBackend
 from .persistence.models import (
     PersistedAudit,
@@ -1325,6 +1326,50 @@ class ActorSystem:
 
         rt.actor._context = ActorContext(system=self, self_ref=self_ref, parent=parent_ref)
 
+    @staticmethod
+    def _validate_proxy_attr_path(attr_path: AttrPath) -> None:
+        for name in attr_path:
+            if name.startswith("_"):
+                raise AttributeError(f"Actor proxy does not expose private attribute {'.'.join(attr_path)!r}")
+
+    @classmethod
+    def _resolve_proxy_target(cls, actor: Actor, attr_path: AttrPath) -> Any:
+        cls._validate_proxy_attr_path(attr_path)
+        target: Any = actor
+        for name in attr_path:
+            target = getattr(target, name)
+        return target
+
+    @classmethod
+    def _resolve_proxy_parent(cls, actor: Actor, attr_path: AttrPath) -> tuple[Any, str]:
+        if not attr_path:
+            raise AttributeError("Actor proxy attribute path cannot be empty.")
+        cls._validate_proxy_attr_path(attr_path)
+        parent_path = attr_path[:-1]
+        parent = cls._resolve_proxy_target(actor, parent_path) if parent_path else actor
+        return parent, attr_path[-1]
+
+    async def _handle_actor_message(self, rt: _ActorRuntime, message: Any) -> Any:
+        """
+        Dispatch an ordinary message or an internal proxy operation to the actor.
+        """
+        if isinstance(message, ProxyCall):
+            target = self._resolve_proxy_target(rt.actor, message.attr_path)
+            result = target(*message.args, **(message.kwargs or {}))
+            if inspect.isawaitable(result):
+                return await result
+            return result
+
+        if isinstance(message, ProxyGetAttr):
+            return self._resolve_proxy_target(rt.actor, message.attr_path)
+
+        if isinstance(message, ProxySetAttr):
+            parent, name = self._resolve_proxy_parent(rt.actor, message.attr_path)
+            setattr(parent, name, message.value)
+            return None
+
+        return await rt.actor.receive(message)
+
     async def _run_actor(self, rt: _ActorRuntime) -> None:
         """
         The main event loop for a single actor.
@@ -1360,7 +1405,7 @@ class ActorSystem:
                     break
 
                 try:
-                    result = await rt.actor.receive(env.message)
+                    result = await self._handle_actor_message(rt, env.message)
                     if env.reply is not None:
                         await env.reply.send(Reply(value=result, error=None))
                 except BaseException as e:

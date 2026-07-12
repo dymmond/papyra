@@ -76,6 +76,7 @@ nav:
   - Quick Start: getting-started/quickstart.md
   - Minimal Example: getting-started/minimal-example.md
   - Actor Registry and Control Panel: getting-started/actor-registry-control-panel.md
+  - Actor Proxies: getting-started/actor-proxies.md
   - Settings: getting-started/settings.md
   - Integrations & ASGI: contrib/integration.md
 - Persistence:

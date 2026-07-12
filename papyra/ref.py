@@ -2,13 +2,16 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import anyio
 
 from ._envelope import DeadLetter, Envelope
 from .address import ActorAddress
 from .exceptions import ActorStopped, AskTimeout
+
+if TYPE_CHECKING:
+    from .proxy import ActorProxy
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +71,17 @@ class ActorRef:
         Return whether the actor currently accepts messages.
         """
         return self._is_alive()
+
+    def proxy(self) -> ActorProxy:
+        """
+        Return an async proxy for method-style calls into the actor.
+        """
+        from .proxy import ActorProxy
+
+        if not self.is_alive():
+            self._dead_letter_emit("proxy", expects_reply=True)
+            raise ActorStopped("Actor is not running.")
+        return ActorProxy(actor_ref=self)
 
     async def tell(self, message: Any) -> None:
         """

@@ -13,6 +13,8 @@ if TYPE_CHECKING:
     from .context import ActorContext
     from .exceptions import ActorStopped, AskTimeout, MailboxClosed, PapyraError
     from .hooks import FailureInfo, SystemHooks
+    from .messages import ProxyCall, ProxyGetAttr, ProxySetAttr
+    from .proxy import ActorProxy, ProxyAccessor
     from .ref import ActorRef
     from .supervision import Strategy, SupervisionPolicy
     from .supervisor import SupervisorDecision
@@ -24,6 +26,8 @@ __all__ = [
     "Actor",
     "ActorContext",
     "ActorRef",
+    "ActorProxy",
+    "ProxyAccessor",
     "ActorSystem",
     "ActorInfo",
     "AuditReport",
@@ -35,6 +39,9 @@ __all__ = [
     "SupervisionPolicy",
     "SupervisorDecision",
     "DeadLetter",
+    "ProxyCall",
+    "ProxyGetAttr",
+    "ProxySetAttr",
     "Receives",
     "ReceivesAny",
     "Settings",
