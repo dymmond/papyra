@@ -2,7 +2,7 @@ from typing import TYPE_CHECKING
 
 from .monkay import create_monkay
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"
 
 if TYPE_CHECKING:
     from ._envelope import DeadLetter

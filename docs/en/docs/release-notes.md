@@ -1,5 +1,27 @@
 # Release Notes
 
+## 0.2.0
+
+### Added
+
+- Live actor registry controls on `ActorSystem`, including `refs()`, `refs_by_type()`, `broadcast()`, and `stop_all()`.
+- `system.control_panel()` for a printable snapshot of actor ids, addresses, names, actor classes, lifecycle state, and hierarchy.
+- `ActorRef.is_alive()` for lightweight liveness checks.
+- Async actor proxies via `ref.proxy()`, allowing method-style calls such as `await proxy.reserve(...)` while preserving actor mailbox isolation.
+- Fire-and-forget proxy method calls with `await proxy.method.defer(...)`.
+- Direct proxy messages (`ProxyCall`, `ProxyGetAttr`, `ProxySetAttr`) for integrations that need lower-level control.
+- Real-world documentation for actor registries, control-panel usage, and actor proxies.
+
+### Fixed
+
+- Persisted lifecycle event and dead-letter records now store stable actor address strings instead of leaking runtime-shaped address values.
+- Actor parent references now expose their address consistently through `context.parent.address`.
+- Watchers now receive one termination notification per stopped actor.
+- Startup persistence hooks are awaited correctly before actors are allowed to run.
+- Actor mailbox and internal event streams now close cleanly during shutdown and failed startup.
+- `ActorAddress.parse()` accepts the documented `system://actor_id` form while preserving the existing `system:actor_id` form.
+- Added the correctly spelled `persistence_recovery` property while keeping `persistance_recovery` as a compatibility alias.
+
 ## 0.1.1
 
 ### Fixed
