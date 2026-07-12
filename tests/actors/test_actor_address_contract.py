@@ -8,6 +8,10 @@ def test_actor_address_roundtrip_string_parse():
     assert parsed == addr
 
 
+def test_actor_address_parse_accepts_documented_uri_form():
+    assert ActorAddress.parse("local://42") == ActorAddress(system="local", actor_id=42)
+
+
 def test_actor_address_equality_and_hash():
     a1 = ActorAddress(system="local", actor_id=1)
     a2 = ActorAddress(system="local", actor_id=1)

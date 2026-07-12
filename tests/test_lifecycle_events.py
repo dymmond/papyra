@@ -31,6 +31,18 @@ async def test_actor_start_event_emitted():
         assert any(isinstance(e, ActorStarted) for e in events)
 
 
+async def test_persisted_event_uses_plain_actor_address():
+    async with ActorSystem() as system:
+        ref = system.spawn(Worker)
+        await system.wait_for_event(ActorStarted)
+        await anyio.sleep(0)
+
+        events = await system.persistence.list_events()
+
+        assert events
+        assert events[-1].actor_address == str(ref.address)
+
+
 async def test_actor_crash_and_restart_events():
     async with ActorSystem() as system:
         ref = system.spawn(Worker, name="svc")  # <-- REQUIRED

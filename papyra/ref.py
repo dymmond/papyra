@@ -63,6 +63,12 @@ class ActorRef:
             raise RuntimeError("ActorRef has no address bound")
         return self._address
 
+    def is_alive(self) -> bool:
+        """
+        Return whether the actor currently accepts messages.
+        """
+        return self._is_alive()
+
     async def tell(self, message: Any) -> None:
         """
         Send a message asynchronously without waiting for a reply ("fire-and-forget").

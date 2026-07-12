@@ -42,9 +42,11 @@ async def test_watch_notified_on_stop():
         await target.ask("stop")
 
         # Give the scheduler a tick so the notification is delivered
-        await anyio.sleep(0)
+        for _ in range(3):
+            await anyio.sleep(0)
 
         # Inspect watcher actor state (test-only access)
         events = system._by_id[watcher._rid].actor.events
         assert len(events) == 1
         assert events[0]._rid == target._rid
+        assert events[0].address == target.address

@@ -96,15 +96,20 @@ class Mailbox:
         """
         return await self._recv.receive()
 
-    async def aclose(self) -> None:
+    async def aclose(self, *, receive: bool = False) -> None:
         """
         Gracefully close the mailbox.
 
         This closes the sending end of the stream, preventing any new messages from being
         enqueued. Messages already in the buffer can still be retrieved via `get()`. Once the
         buffer is drained, `get()` will raise `EndOfStream`.
+
+        Set ``receive=True`` only after the actor loop has stopped receiving from this mailbox.
+        Closing the receive side while another task is blocked in ``get()`` raises
+        ``ClosedResourceError`` instead of unblocking it normally.
         """
-        if self._closed:
-            return
-        self._closed = True
-        await self._send.aclose()
+        if not self._closed:
+            self._closed = True
+            await self._send.aclose()
+        if receive:
+            await self._recv.aclose()

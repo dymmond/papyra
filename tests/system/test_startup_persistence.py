@@ -63,6 +63,43 @@ async def test_startup_recovers_then_succeeds(tmp_path):
     await system.aclose()
 
 
+class RecordingStartupHooks:
+    def __init__(self):
+        self.scans = []
+        self.recoveries = []
+
+    async def on_persistence_scan(self, report):
+        self.scans.append(report)
+
+    async def on_persistence_recovery(self, report):
+        self.recoveries.append(report)
+
+
+async def test_async_startup_hooks_are_awaited_before_start_returns(tmp_path):
+    path = tmp_path / "events.ndjson"
+    path.write_text(
+        '{"kind": "event", "timestamp": 1}\n{"kind": "event"',
+        encoding="utf-8",
+    )
+
+    hooks = RecordingStartupHooks()
+    system = ActorSystem(
+        hooks=hooks,
+        persistence=JsonFilePersistence(path),
+        persistence_startup=PersistenceStartupConfig(
+            mode=PersistenceStartupMode.RECOVER,
+            recovery=PersistenceRecoveryConfig(mode=PersistenceRecoveryMode.REPAIR),
+        ),
+    )
+
+    await system.start()
+
+    assert len(hooks.scans) == 2
+    assert len(hooks.recoveries) == 1
+
+    await system.aclose()
+
+
 class FlagActor(Actor):
     async def on_start(self):
         raise AssertionError("Actor started before persistence startup completed")

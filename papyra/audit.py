@@ -33,6 +33,8 @@ class ActorInfo:
         True if the actor is in the process of shutting down (gracefully or forcefully).
     restarting : bool
         True if the actor is currently undergoing a restart procedure (e.g., due to a failure).
+    actor_type : str
+        The concrete actor class name for this runtime.
     """
 
     rid: int
@@ -45,6 +47,33 @@ class ActorInfo:
     alive: bool
     stopping: bool
     restarting: bool
+    actor_type: str = ""
+
+    @property
+    def state(self) -> str:
+        """
+        Return the actor's lifecycle state as a compact human-readable value.
+        """
+        if self.restarting:
+            return "restarting"
+        if self.stopping:
+            return "stopping"
+        if self.alive:
+            return "alive"
+        return "stopped"
+
+    def panel_line(self) -> str:
+        """
+        Return one compact line suitable for live actor listings.
+        """
+        name = self.name or "-"
+        parent = str(self.parent_rid) if self.parent_rid is not None else "-"
+        children = ",".join(str(rid) for rid in self.children_rids) if self.children_rids else "-"
+        actor_type = self.actor_type or "-"
+        return (
+            f"rid={self.rid} address={self.address} name={name} "
+            f"actor={actor_type} state={self.state} parent={parent} children={children}"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,7 +138,19 @@ class AuditReport:
         """
         return (
             f"system_id={self.system_id}",
-            f"actors(total={self.total_actors}, alive={self.alive_actors}, stopping={self.stopping_actors}, restarting={self.restarting_actors})",
-            f"registry(size={self.registry_size}, orphans={len(self.registry_orphans)}, dead={len(self.registry_dead)})",
+            "actors("
+            f"total={self.total_actors}, alive={self.alive_actors}, "
+            f"stopping={self.stopping_actors}, restarting={self.restarting_actors})",
+            "registry("
+            f"size={self.registry_size}, orphans={len(self.registry_orphans)}, "
+            f"dead={len(self.registry_dead)})",
             f"dead_letters={self.dead_letters_count}",
         )
+
+    def panel_lines(self) -> tuple[str, ...]:
+        """
+        Generate a readable live-control-panel style view of the audit report.
+        """
+        if not self.actors:
+            return self.summary_lines() + ("actors=<not included>",)
+        return self.summary_lines() + tuple(actor.panel_line() for actor in self.actors)

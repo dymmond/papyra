@@ -75,6 +75,10 @@ async def main() -> None:
         value = await ref.ask("get")
         print("counter =", value)
 
+        # Live control-panel style snapshot: id, address, name, actor type, state, hierarchy.
+        for line in system.control_panel():
+            print(line)
+
 
 if __name__ == "__main__":
     anyio.run(main)
@@ -85,6 +89,7 @@ if __name__ == "__main__":
 - `ActorSystem()` defaults to an in-memory persistence backend (great for local dev/tests).
 - In `receive(...)`, you can return a value for request/reply usage.
 - `on_start()` is the right place for initialization that needs `self.context`.
+- `system.control_panel()` gives you a live, printable snapshot of the actors the system knows about.
 
 ## 3) Adding persistence (optional)
 

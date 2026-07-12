@@ -1,3 +1,4 @@
+import anyio
 import pytest
 
 from papyra import Actor, ActorStopped, ActorSystem, DeadLetter
@@ -32,6 +33,22 @@ async def test_dead_letter_on_tell_to_stopped_actor():
         assert dl.target._rid == ref._rid
         assert dl.message == "after"
         assert dl.expects_reply is False
+
+
+async def test_persisted_dead_letter_uses_plain_actor_address():
+    async with ActorSystem() as system:
+        ref = system.spawn(Target)
+
+        await ref.ask("stop")
+
+        with pytest.raises(ActorStopped):
+            await ref.tell("after")
+
+        await anyio.sleep(0)
+        dead_letters = await system.persistence.list_dead_letters()
+
+        assert dead_letters
+        assert dead_letters[-1].target == str(ref.address)
 
 
 async def test_dead_letter_on_ask_to_stopped_actor():

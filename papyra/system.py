@@ -283,7 +283,7 @@ class ActorSystem:
         self._persistence_startup = config
 
     @property
-    def persistance_recovery(self) -> PersistenceRecoveryConfig | None:
+    def persistence_recovery(self) -> PersistenceRecoveryConfig | None:
         """
         Retrieve the persistence recovery configuration.
 
@@ -298,8 +298,8 @@ class ActorSystem:
         """
         return self._persistence_recovery
 
-    @persistance_recovery.setter
-    def persistance_recovery(self, config: PersistenceRecoveryConfig | None) -> None:
+    @persistence_recovery.setter
+    def persistence_recovery(self, config: PersistenceRecoveryConfig | None) -> None:
         """
         Set the persistence recovery configuration.
 
@@ -310,9 +310,22 @@ class ActorSystem:
         Parameters:
             config (PersistenceRecoveryConfig | None): The new recovery
                 configuration to apply, or None to disable specific recovery handling.
-        self._persistence_recovery = config
         """
         self._persistence_recovery = config
+
+    @property
+    def persistance_recovery(self) -> PersistenceRecoveryConfig | None:
+        """
+        Backward-compatible alias for the misspelled recovery configuration property.
+        """
+        return self.persistence_recovery
+
+    @persistance_recovery.setter
+    def persistance_recovery(self, config: PersistenceRecoveryConfig | None) -> None:
+        """
+        Backward-compatible alias for the misspelled recovery configuration property.
+        """
+        self.persistence_recovery = config
 
     def events(self) -> tuple[ActorEvent, ...]:
         """
@@ -329,6 +342,34 @@ class ActorSystem:
             A tuple containing `ActorEvent` objects in the exact order they were emitted.
         """
         return tuple(self._events)
+
+    @staticmethod
+    def _persisted_address(value: Any) -> str:
+        """
+        Convert runtime address-like values into the plain string stored by persistence backends.
+        """
+        if isinstance(value, ActorAddress):
+            return str(value)
+
+        if isinstance(value, dict):
+            with contextlib.suppress(Exception):
+                return str(ActorAddress.from_dict(value))
+
+        return str(value)
+
+    @staticmethod
+    def _actor_ref_address(value: Any) -> str | None:
+        """
+        Extract a stable address string from an actor reference-like object.
+        """
+        if isinstance(value, (ActorAddress, str, dict)):
+            return ActorSystem._persisted_address(value)
+
+        try:
+            address = value.address
+        except Exception:
+            return None
+        return ActorSystem._persisted_address(address)
 
     def _emit(self, event: ActorEvent) -> None:
         """
@@ -351,7 +392,7 @@ class ActorSystem:
 
         persisted = PersistedEvent(
             system_id=self.system_id,
-            actor_address=cast(ActorAddress, event.address),
+            actor_address=self._persisted_address(event.address),
             event_type=type(event).__name__,
             payload=event.payload,
             timestamp=timestamp,
@@ -489,11 +530,30 @@ class ActorSystem:
         # Execute the persistence layer's health check and recovery process.
         # This MUST complete successfully before any tasks are spawned to ensure
         # data integrity.
-        await self._run_persistence_startup()
+        try:
+            await self._run_persistence_startup()
+        except BaseException:
+            self._closed = True
+            await self._close_event_streams()
+            raise
 
         # Initialize the root task group. We manually enter the context manager here
         # to keep the group open for the lifetime of the ActorSystem object.
         self._tg = await anyio.create_task_group().__aenter__()
+
+    def _ref_for_runtime(self, rt: _ActorRuntime) -> "ActorRef":
+        """
+        Build a fresh public reference for a runtime record.
+        """
+        from .ref import ActorRef
+
+        return ActorRef(
+            _rid=rt.rid,
+            _mailbox_put=rt.mailbox.put,
+            _is_alive=lambda: (not self._closed) and rt.alive and (not rt.stopping),
+            _dead_letter=self.dead_letters.push,
+            _address=rt.address,
+        )
 
     def spawn(
         self,
@@ -536,8 +596,6 @@ class ActorSystem:
         ActorStopped
             If the system is closed or has not been started.
         """
-        from .ref import ActorRef
-
         if self._closed or self._tg is None:
             raise ActorStopped("ActorSystem is not running.", reason="shutdown")
 
@@ -584,14 +642,7 @@ class ActorSystem:
         if name is not None:
             self._registry[name] = address
 
-        ref = ActorRef(
-            _rid=rid,
-            _mailbox_put=rt.mailbox.put,
-            _is_alive=lambda: (not self._closed) and rt.alive and (not rt.stopping),
-            _dead_letter=self.dead_letters.push,
-            _address=address,
-        )
-
+        ref = self._ref_for_runtime(rt)
         self._inject_context(rt, self_ref=ref)
         self._tg.start_soon(self._run_actor, rt)
         return ref
@@ -619,8 +670,6 @@ class ActorSystem:
             If the address belongs to a remote system, the actor does not exist, or the
             actor is not currently running.
         """
-        from .ref import ActorRef
-
         if isinstance(address, str):
             address = ActorAddress.parse(address)
 
@@ -634,13 +683,7 @@ class ActorSystem:
         if (not rt.alive) or rt.stopping:
             raise ActorStopped("Actor is not running.", reason="shutdown")
 
-        return ActorRef(
-            _rid=rt.rid,
-            _mailbox_put=rt.mailbox.put,
-            _is_alive=lambda: (not self._closed) and rt.alive and (not rt.stopping),
-            _dead_letter=self.dead_letters.push,
-            _address=address,
-        )
+        return self._ref_for_runtime(rt)
 
     def ref_for_name(self, name: str) -> "ActorRef":
         """
@@ -668,8 +711,6 @@ class ActorSystem:
             not been registered.
         """
         # Attempt to retrieve the address associated with the name from the registry.
-        from .ref import ActorRef
-
         address = self._registry.get(name)
         if address is None:
             raise ActorStopped(f"Actor with name '{name}' does not exist.", reason="shutdown")
@@ -678,13 +719,7 @@ class ActorSystem:
         if rt is None:
             raise ActorStopped(f"Actor with name '{name}' does not exist.", reason="shutdown")
 
-        return ActorRef(
-            _rid=rt.rid,
-            _mailbox_put=rt.mailbox.put,
-            _is_alive=lambda: (not self._closed) and rt.alive and (not rt.stopping),
-            _dead_letter=self.dead_letters.push,
-            _address=rt.address,
-        )
+        return self._ref_for_runtime(rt)
 
     async def stop(self, ref: Any) -> None:
         """
@@ -758,6 +793,93 @@ class ActorSystem:
             return tuple(rt.address for rt in self._actors)
         return tuple(rt.address for rt in self._actors if rt.alive and not rt.stopping)
 
+    @staticmethod
+    def _matches_actor_type(rt: _ActorRuntime, actor_type: type[Actor] | str) -> bool:
+        """
+        Return whether a runtime's current actor matches a class or class-name filter.
+        """
+        if isinstance(actor_type, str):
+            current_type = type(rt.actor)
+            return actor_type in {
+                current_type.__name__,
+                current_type.__qualname__,
+                f"{current_type.__module__}.{current_type.__qualname__}",
+            }
+        return isinstance(rt.actor, actor_type)
+
+    def refs(self, *, alive_only: bool = True) -> tuple["ActorRef", ...]:
+        """
+        Return fresh references for actors known to this system.
+
+        By default this behaves like a live registry and returns only actors that can currently
+        accept messages. Pass ``alive_only=False`` when diagnostic tooling needs stopped
+        runtimes too.
+        """
+        runtimes = (
+            rt
+            for rt in self._actors
+            if not alive_only or (rt.alive and not rt.stopping)
+        )
+        return tuple(self._ref_for_runtime(rt) for rt in runtimes)
+
+    def refs_by_type(
+        self,
+        actor_type: type[Actor] | str,
+        *,
+        alive_only: bool = True,
+    ) -> tuple["ActorRef", ...]:
+        """
+        Return fresh references for actors whose current implementation matches ``actor_type``.
+
+        ``actor_type`` may be the actor class itself, the class name, the qualname, or the
+        fully qualified ``module.QualName`` string.
+        """
+        runtimes = (
+            rt
+            for rt in self._actors
+            if self._matches_actor_type(rt, actor_type)
+            and (not alive_only or (rt.alive and not rt.stopping))
+        )
+        return tuple(self._ref_for_runtime(rt) for rt in runtimes)
+
+    async def broadcast(
+        self,
+        message: Any,
+        *,
+        actor_type: type[Actor] | str | None = None,
+        alive_only: bool = True,
+    ) -> int:
+        """
+        Send ``message`` to all matching actors using fire-and-forget semantics.
+
+        Returns the number of actors that accepted the message.
+        """
+        refs = (
+            self.refs(alive_only=alive_only)
+            if actor_type is None
+            else self.refs_by_type(actor_type, alive_only=alive_only)
+        )
+        delivered = 0
+        for ref in refs:
+            try:
+                await ref.tell(message)
+            except ActorStopped:
+                continue
+            delivered += 1
+        return delivered
+
+    async def stop_all(self) -> None:
+        """
+        Stop all root actors and cascade through their children without closing the system.
+        """
+        if self._closed:
+            return
+
+        roots = [rt for rt in self._actors if rt.parent is None]
+        for rt in roots:
+            with contextlib.suppress(Exception):
+                await self._stop_runtime(rt)
+
     def actor_info(self, target: Any) -> ActorInfo:
         """
         Generate a detailed point-in-time snapshot of a specific actor's state.
@@ -802,6 +924,43 @@ class ActorSystem:
             alive=rt.alive,
             stopping=rt.stopping,
             restarting=getattr(rt, "restarting", False),
+            actor_type=type(rt.actor).__qualname__,
+        )
+
+    def control_panel(self, *, alive_only: bool = False) -> tuple[str, ...]:
+        """
+        Return a compact live view of actors currently known to the system.
+
+        The output is intentionally plain text so it can be printed, logged, or exposed by
+        application-specific diagnostics without depending on a UI framework.
+        """
+        actors = [
+            self.actor_info(rt.rid)
+            for rt in self._actors
+            if not alive_only or (rt.alive and not rt.stopping)
+        ]
+        if not actors:
+            return ("No actors.",)
+
+        rows = [
+            ("RID", "ADDRESS", "NAME", "ACTOR", "STATE", "PARENT", "CHILDREN"),
+            *(
+                (
+                    str(actor.rid),
+                    str(actor.address),
+                    actor.name or "-",
+                    actor.actor_type or "-",
+                    actor.state,
+                    str(actor.parent_rid) if actor.parent_rid is not None else "-",
+                    ",".join(str(rid) for rid in actor.children_rids) if actor.children_rids else "-",
+                )
+                for actor in actors
+            ),
+        ]
+        widths = [max(len(row[index]) for row in rows) for index in range(len(rows[0]))]
+        return tuple(
+            "  ".join(value.ljust(widths[index]) for index, value in enumerate(row)).rstrip()
+            for row in rows
         )
 
     def audit(self, *, include_actor_details: bool = True) -> AuditReport:
@@ -920,7 +1079,7 @@ class ActorSystem:
 
         # Notify hooks about the scan result (e.g., for logging or monitoring).
         if scan is not None:
-            self._dispatch_hook("on_persistence_scan", scan)
+            await self._dispatch_hook_async("on_persistence_scan", scan)
 
         # If the backend is healthy or the scan capability is missing, we are done.
         if scan is None or not scan.has_anomalies:
@@ -945,7 +1104,7 @@ class ActorSystem:
             # Attempt to repair the anomalies using the configured recovery strategy.
             report = await self._persistence.recover(cfg.recovery)
             if report is not None:
-                self._dispatch_hook("on_persistence_recovery", report)
+                await self._dispatch_hook_async("on_persistence_recovery", report)
 
             # -------------------------
             # STEP 3: POST-SCAN GUARANTEE
@@ -953,7 +1112,7 @@ class ActorSystem:
             # Validate that the recovery was actually successful.
             post = await self._persistence.scan()
             if post is not None:
-                self._dispatch_hook("on_persistence_scan", post)
+                await self._dispatch_hook_async("on_persistence_scan", post)
 
             # If anomalies still exist after recovery, we must abort to prevent data loss.
             if post is not None and post.has_anomalies:
@@ -988,7 +1147,7 @@ class ActorSystem:
 
         persisted = PersistedDeadLetter(
             system_id=self.system_id,
-            target=dl.target,
+            target=self._actor_ref_address(dl.target),
             message_type=type(dl.message).__name__,
             payload=dl.message,
             timestamp=self.now(),
@@ -1035,8 +1194,27 @@ class ActorSystem:
             # If the hook is async, offload it to the TaskGroup to avoid blocking the loop.
             if inspect.isawaitable(result) and self._tg is not None:
                 self._tg.start_soon(self._await_hook, result)
+            elif inspect.iscoroutine(result):
+                try:
+                    result.close()
+                except Exception:
+                    return
         except Exception:
             # Hooks must never crash the system, so we suppress all errors here.
+            return
+
+    async def _dispatch_hook_async(self, name: str, *args: Any) -> None:
+        """
+        Safely execute a hook from an async path, awaiting async hook implementations.
+        """
+        fn = getattr(self._hooks, name, None)
+        if fn is None:
+            return
+        try:
+            result = fn(*args)
+            if inspect.isawaitable(result):
+                await self._await_hook(result)
+        except Exception:
             return
 
     async def _await_hook(self, awaitable: Any) -> None:
@@ -1073,8 +1251,6 @@ class ActorSystem:
             A set of actor IDs already visited in the recursion to prevent potential
             infinite loops (though hierarchies should be acyclic). Defaults to None.
         """
-        from .ref import ActorRef
-
         if _seen is None:
             _seen = set()
 
@@ -1092,21 +1268,6 @@ class ActorSystem:
 
         # Mark stopping first
         rt.stopping = True
-
-        self_ref = ActorRef(
-            _rid=rt.rid,
-            _mailbox_put=rt.mailbox.put,
-            _is_alive=lambda: False,
-            _dead_letter=self.dead_letters.push,
-        )
-
-        for watcher_rid in list(rt.watchers):
-            watcher_rt = self._by_id.get(watcher_rid)
-            if watcher_rt is None or not watcher_rt.alive:
-                continue
-
-            with contextlib.suppress(Exception):
-                await watcher_rt.mailbox.put(Envelope(message=ActorTerminated(self_ref), reply=None))
 
         try:
             await rt.mailbox.put(Envelope(message=STOP, reply=None))
@@ -1159,6 +1320,7 @@ class ActorSystem:
                 _mailbox_put=rt.parent.mailbox.put,
                 _is_alive=lambda: (not self._closed) and rt.parent.alive and (not rt.parent.stopping),
                 _dead_letter=self.dead_letters.push,
+                _address=rt.parent.address,
             )
 
         rt.actor._context = ActorContext(system=self, self_ref=self_ref, parent=parent_ref)
@@ -1216,48 +1378,46 @@ class ActorSystem:
                     break
 
         finally:
-            if rt.restarting:
-                return  # noqa
+            if not rt.restarting:
+                # Mark actor as dead for this run-loop
+                rt.alive = False
 
-            # Mark actor as dead for this run-loop
-            rt.alive = False
+                # Remove name only on permanent stop (not restart)
+                if rt.name is not None and rt.stopping and not rt.restarting:
+                    self._registry.pop(rt.name, None)
 
-            # Remove name only on permanent stop (not restart)
-            if rt.name is not None and rt.stopping and not rt.restarting:
-                self._registry.pop(rt.name, None)
-
-            # Create inert ref for termination notification
-            self_ref = ActorRef(
-                _rid=rt.rid,
-                _mailbox_put=rt.mailbox.put,
-                _is_alive=lambda: False,
-                _dead_letter=self.dead_letters.push,
-                _address=rt.address,
-            )
-
-            # Notify watchers exactly once
-            for watcher_rid in list(rt.watchers):
-                watcher_rt = self._by_id.get(watcher_rid)
-                if watcher_rt is None or not watcher_rt.alive:
-                    continue
-
-                with contextlib.suppress(Exception):
-                    await watcher_rt.mailbox.put(
-                        Envelope(
-                            message=ActorTerminated(self_ref),
-                            reply=None,
-                        )
-                    )
-
-            await self._safe_on_stop(rt)
-
-            self._emit(
-                ActorStoppedEvent(
-                    address=_serialize_address(rt.address),
-                    reason="stopped",
+                # Create inert ref for termination notification
+                self_ref = ActorRef(
+                    _rid=rt.rid,
+                    _mailbox_put=rt.mailbox.put,
+                    _is_alive=lambda: False,
+                    _dead_letter=self.dead_letters.push,
+                    _address=rt.address,
                 )
-            )
-            await rt.mailbox.aclose()
+
+                # Notify watchers exactly once
+                for watcher_rid in list(rt.watchers):
+                    watcher_rt = self._by_id.get(watcher_rid)
+                    if watcher_rt is None or not watcher_rt.alive:
+                        continue
+
+                    with contextlib.suppress(Exception):
+                        await watcher_rt.mailbox.put(
+                            Envelope(
+                                message=ActorTerminated(self_ref),
+                                reply=None,
+                            )
+                        )
+
+                await self._safe_on_stop(rt)
+
+                self._emit(
+                    ActorStoppedEvent(
+                        address=_serialize_address(rt.address),
+                        reason="stopped",
+                    )
+                )
+                await rt.mailbox.aclose(receive=True)
 
     async def _safe_on_start(self, rt: _ActorRuntime) -> bool:
         """
@@ -1619,6 +1779,7 @@ class ActorSystem:
         4. Awaits the completion of the background task group.
         """
         if self._closed:
+            await self._close_event_streams()
             return
         self._closed = True
 
@@ -1639,11 +1800,19 @@ class ActorSystem:
             self._tg = None
             await tg.__aexit__(None, None, None)
 
-            with contextlib.suppress(Exception):
-                await self._event_send.aclose()
+            await self._close_event_streams()
 
         with contextlib.suppress(Exception):
             await self._persistence.aclose()
+
+    async def _close_event_streams(self) -> None:
+        """
+        Close internal event streams even when startup fails before the task group exists.
+        """
+        with contextlib.suppress(Exception):
+            await self._event_send.aclose()
+        with contextlib.suppress(Exception):
+            await self._event_recv.aclose()
 
     async def compact(self) -> Any:
         """
