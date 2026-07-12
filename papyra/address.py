@@ -62,9 +62,12 @@ class ActorAddress:
             is empty, or if the actor ID cannot be converted to an integer.
         """
         if not isinstance(raw, str) or ":" not in raw:
-            raise ValueError("Invalid address format. Expected '<system>:<actor_id>'.")
+            raise ValueError("Invalid address format. Expected '<system>:<actor_id>' or '<system>://<actor_id>'.")
 
-        system, actor_id_str = raw.split(":", 1)
+        if "://" in raw:
+            system, actor_id_str = raw.split("://", 1)
+        else:
+            system, actor_id_str = raw.split(":", 1)
         system = system.strip()
         actor_id_str = actor_id_str.strip()
 

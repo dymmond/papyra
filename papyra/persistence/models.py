@@ -112,7 +112,7 @@ class PersistedDeadLetter:
     """
 
     system_id: str
-    target: ActorAddress | None
+    target: ActorAddress | str | None
     message_type: str
     payload: Any
     timestamp: float
