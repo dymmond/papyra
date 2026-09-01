@@ -77,7 +77,8 @@ testing = [
     "pytest-cov>=4.0.0,<5.0.0",
     "httpx2",
     "ipdb",
-    "ravyn>=0.3.7",
+    "ravyn>=0.4.0",
+    "lilya>=0.27.1",
     "fastapi",
 ]
 
