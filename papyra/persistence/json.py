@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 import anyio
-import anyio.abc
 
 from papyra.persistence.backends.retention import RetentionPolicy
 
@@ -54,7 +53,7 @@ class JsonFilePersistence(PersistenceBackend):
     ----------
     _path : Path
         The filesystem path to the storage file.
-    _lock : anyio.abc.Lock
+    _lock : anyio.Lock
         Async lock ensuring exclusive write access.
     _closed : bool
         Flag indicating if the backend has been shut down.
@@ -72,7 +71,7 @@ class JsonFilePersistence(PersistenceBackend):
         """
         super().__init__(retention_policy=retention_policy)
         self._path = Path(path)
-        self._lock: anyio.abc.Lock = anyio.Lock()
+        self._lock: anyio.Lock = anyio.Lock()
         self._closed: bool = False
 
     @property

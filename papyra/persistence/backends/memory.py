@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any
 
 import anyio
-import anyio.abc
 
 from papyra.persistence.backends.retention import RetentionPolicy
 from papyra.persistence.base import PersistenceBackend
@@ -35,7 +34,7 @@ class InMemoryPersistence(PersistenceBackend):
 
     Attributes
     ----------
-    _lock : anyio.abc.Lock
+    _lock : anyio.Lock
         An asynchronous reentrant lock guarding access to the internal lists.
     _events : list[PersistedEvent]
         Internal storage for lifecycle events.
@@ -50,7 +49,7 @@ class InMemoryPersistence(PersistenceBackend):
 
     def __init__(self, retention_policy: RetentionPolicy | None = None) -> None:
         super().__init__(retention_policy=retention_policy)
-        self._lock: anyio.abc.Lock = anyio.Lock()
+        self._lock: anyio.Lock = anyio.Lock()
 
         self._events: list[PersistedEvent] = []
         self._audits: list[PersistedAudit] = []

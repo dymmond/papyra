@@ -47,7 +47,7 @@ async def events(
 
     for event in events:
         # Format the output for readability: [1700000000.123] ActorStarted local://1
-        info(f"[{event.timestamp:.3f}] " f"{event.event_type} " f"{event.actor_address}")
+        info(f"[{event.timestamp:.3f}] {event.event_type} {event.actor_address}")
 
 
 @inspect.command()
@@ -116,7 +116,7 @@ async def dead_letters(
         return
 
     for dl in dead_letters:
-        info(f"[{dl.timestamp:.3f}] " f"target={dl.target} " f"type={dl.message_type} " f"payload={dl.payload!r}")
+        info(f"[{dl.timestamp:.3f}] target={dl.target} type={dl.message_type} payload={dl.payload!r}")
 
 
 @inspect.command()

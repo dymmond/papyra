@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any
 
 import anyio
-import anyio.abc
 
 from papyra.persistence._retention import apply_retention
 from papyra.persistence._utils import _json_default, _pick_dataclass_fields
@@ -61,7 +60,7 @@ class RotatingFilePersistence(PersistenceBackend):
         _max_bytes (int): The maximum size in bytes allowed for the active file before rotation.
         _max_files (int): The maximum number of log files to keep (including the active one).
         _fsync (bool): Whether to force a file system sync after every write for durability.
-        _lock (anyio.abc.Lock): An async lock to ensure thread-safe file operations.
+        _lock (anyio.Lock): An async lock to ensure thread-safe file operations.
         _closed (bool): A flag indicating if the persistence backend has been closed.
     """
 
@@ -95,7 +94,7 @@ class RotatingFilePersistence(PersistenceBackend):
         self._max_files = int(max_files)
         self._fsync = bool(fsync)
 
-        self._lock: anyio.abc.Lock = anyio.Lock()
+        self._lock: anyio.Lock = anyio.Lock()
         self._closed: bool = False
 
         if self._max_bytes <= 0:

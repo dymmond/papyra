@@ -70,7 +70,6 @@ from dataclasses import asdict
 from typing import Any
 
 import anyio
-import anyio.abc
 
 from papyra.persistence.base import PersistenceBackend
 from papyra.persistence.models import PersistedAudit, PersistedDeadLetter, PersistedEvent
@@ -87,7 +86,7 @@ class MyCustomBackend(PersistenceBackend):
     def __init__(self, sink: MySink) -> None:
         super().__init__()
         self._sink = sink
-        self._lock: anyio.abc.Lock = anyio.Lock()
+        self._lock: anyio.Lock = anyio.Lock()
         self._closed = False
 
     async def record_event(self, event: PersistedEvent) -> None:  # type: ignore

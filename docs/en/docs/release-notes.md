@@ -1,5 +1,16 @@
 # Release Notes
 
+## 0.3.0
+
+### Changed
+
+- Raised the minimum supported AnyIO version to 4.15.0.
+- Explicitly capped Python support at 3.14; Python 3.15 is not supported yet.
+
+### Fixed
+
+- Updated persistence lock annotations to use the canonical `anyio.Lock` type, restoring type-checking compatibility with AnyIO 4.15.0.
+
 ## 0.2.0
 
 ### Added

@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from typing import Any, Literal, Mapping
 
 import anyio
-import anyio.abc
 
 from papyra.persistence._retention import apply_retention
 from papyra.persistence._utils import _json_default, _pick_dataclass_fields
@@ -190,7 +189,7 @@ class RedisStreamsPersistence(PersistenceBackend):
         """
         super().__init__(retention_policy=retention_policy)
         self._cfg = config or RedisStreamsConfig()
-        self._lock: anyio.abc.Lock = anyio.Lock()
+        self._lock: anyio.Lock = anyio.Lock()
 
         # Check for redis library availability immediately upon initialization
         redis_async = _require_redis()
