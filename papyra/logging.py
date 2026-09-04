@@ -147,9 +147,9 @@ class LoggingConfig(ABC):
             If the provided `level` is not a valid logging level.
         """
         levels: str = ", ".join(self.__logging_levels__)
-        assert (
-            level.upper() in self.__logging_levels__
-        ), f"'{level}' is not a valid logging level. Available levels: '{levels}'."
+        assert level.upper() in self.__logging_levels__, (
+            f"'{level}' is not a valid logging level. Available levels: '{levels}'."
+        )
 
         self.level = level.upper()
         self.options = kwargs

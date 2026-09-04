@@ -143,7 +143,7 @@ async def test_persistence_survives_reopen(json_path: Path):
 
 
 async def test_invalid_json_lines_are_ignored(json_path: Path):
-    json_path.write_text('{"kind": "event", "timestamp": 1}\n' "not-json\n" '{"kind": "audit", "timestamp": 2}\n')
+    json_path.write_text('{"kind": "event", "timestamp": 1}\nnot-json\n{"kind": "audit", "timestamp": 2}\n')
 
     persistence = JsonFilePersistence(json_path)
 

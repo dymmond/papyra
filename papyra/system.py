@@ -816,11 +816,7 @@ class ActorSystem:
         accept messages. Pass ``alive_only=False`` when diagnostic tooling needs stopped
         runtimes too.
         """
-        runtimes = (
-            rt
-            for rt in self._actors
-            if not alive_only or (rt.alive and not rt.stopping)
-        )
+        runtimes = (rt for rt in self._actors if not alive_only or (rt.alive and not rt.stopping))
         return tuple(self._ref_for_runtime(rt) for rt in runtimes)
 
     def refs_by_type(
@@ -838,8 +834,7 @@ class ActorSystem:
         runtimes = (
             rt
             for rt in self._actors
-            if self._matches_actor_type(rt, actor_type)
-            and (not alive_only or (rt.alive and not rt.stopping))
+            if self._matches_actor_type(rt, actor_type) and (not alive_only or (rt.alive and not rt.stopping))
         )
         return tuple(self._ref_for_runtime(rt) for rt in runtimes)
 
@@ -935,11 +930,7 @@ class ActorSystem:
         The output is intentionally plain text so it can be printed, logged, or exposed by
         application-specific diagnostics without depending on a UI framework.
         """
-        actors = [
-            self.actor_info(rt.rid)
-            for rt in self._actors
-            if not alive_only or (rt.alive and not rt.stopping)
-        ]
+        actors = [self.actor_info(rt.rid) for rt in self._actors if not alive_only or (rt.alive and not rt.stopping)]
         if not actors:
             return ("No actors.",)
 
@@ -959,10 +950,7 @@ class ActorSystem:
             ),
         ]
         widths = [max(len(row[index]) for row in rows) for index in range(len(rows[0]))]
-        return tuple(
-            "  ".join(value.ljust(widths[index]) for index, value in enumerate(row)).rstrip()
-            for row in rows
-        )
+        return tuple("  ".join(value.ljust(widths[index]) for index, value in enumerate(row)).rstrip() for row in rows)
 
     def audit(self, *, include_actor_details: bool = True) -> AuditReport:
         """

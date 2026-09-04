@@ -12,7 +12,7 @@ production-grade backends such as Redis. You only install what you actually need
 
 Before installing Papyra, ensure you have:
 
-- **Python 3.10 or newer**
+- **Python 3.10 through 3.14**
 - A modern virtual environment tool (recommended: `venv`, `uv`, `pipx`, or `hatch`)
 - (Optional) Redis 7+ if you plan to use Redis Streams persistence
 

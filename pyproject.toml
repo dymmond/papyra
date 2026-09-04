@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "papyra"
 description = "The async actor model you didn't know you needed"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.15"
 dynamic = ['version']
 authors = [{ name = "Tiago Silva", email = "tiago@tarsild.io" }]
 classifiers = [
@@ -36,7 +36,7 @@ classifiers = [
     "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
     "Topic :: Internet :: WWW/HTTP",
 ]
-dependencies = ["anyio>=4.12.0", "sayer>=0.7.5"]
+dependencies = ["anyio>=4.15.0", "sayer>=0.7.5"]
 keywords = [
   "papyra",
   "actor",
@@ -59,7 +59,7 @@ path = "papyra/__init__.py"
 
 [tool.hatch.envs.default]
 dependencies = [
-    "mypy==1.19.1",
+    "ty==0.0.78",
     "ruff>=0.3.0,<5.0.0",
     "pre-commit>=3.3.1,<4.0.0",
     "devtools>=0.12.2",
@@ -129,28 +129,12 @@ features = ["testing"]
 [tool.hatch.envs.test.scripts]
 test = "hatch test -- {args}"
 test_man = "hatch test -- {args} -s -vv"
-check_types = "mypy -p papyra"
+check_types = "ty check --error-on-warning --python \"$VIRTUAL_ENV\" papyra"
 
 [tool.isort]
 profile = "black"
 known_third_party = []
 src_paths = ["papyra"]
-
-[tool.mypy]
-strict = true
-warn_unused_configs = true
-warn_unreachable = true
-warn_return_any = true
-disallow_untyped_decorators = true
-disallow_any_generics = false
-implicit_reexport = false
-show_error_codes = true
-disallow_incomplete_defs = true
-warn_unused_ignores = true
-warn_redundant_casts = true
-no_implicit_optional = false
-strict_equality = false
-strict_optional = false
 
 [tool.ruff]
 line-length = 120
@@ -164,20 +148,23 @@ exclude = ["docs_src/"]
 [tool.ruff.lint.isort]
 combine-as-imports = true
 
+[tool.ty.terminal]
+error-on-warning = true
+
+[tool.ty.rules]
+invalid-argument-type = "ignore"
+invalid-assignment = "ignore"
+invalid-await = "ignore"
+invalid-type-form = "ignore"
+possibly-missing-submodule = "ignore"
+unresolved-attribute = "ignore"
+unused-type-ignore-comment = "ignore"
+
 [tool.coverage.run]
 parallel = true
 context = '${CONTEXT}'
 source = ["tests", "papyra"]
 # omit = []
-
-[[tool.mypy.overrides]]
-module = "papyra.tests.*"
-ignore_missing_imports = true
-check_untyped_defs = true
-
-[[tool.mypy.overrides]]
-module = "docs_src.*"
-ignore_errors = true
 
 [tool.pytest.ini_options]
 addopts = ["--strict-config", "--strict-markers"]
